@@ -8,8 +8,6 @@ from google import genai
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
-FPL_EMAIL = os.environ.get("FPL_EMAIL")
-FPL_PASSWORD = os.environ.get("FPL_PASSWORD")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 
 # 2. Pre-Flight Check
@@ -20,48 +18,38 @@ if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
 client = genai.Client(api_key=GEMINI_API_KEY)
 
 def get_fpl_data():
-    session = requests.Session()
-    headers = {"User-Agent": "FPL-Auto-Script/1.1"}
+    headers = {"User-Agent": "FPL-Auto-Script/1.2"}
     
-    # Authenticate to access the protected /my-team/ endpoint
-    if FPL_EMAIL and FPL_PASSWORD:
-        login_url = "https://users.premierleague.com/accounts/login/"
-        payload = {
-            "login": FPL_EMAIL,
-            "password": FPL_PASSWORD,
-            "app": "plfpl-web",
-            "redirect_uri": "https://fantasy.premierleague.com/a/login"
-        }
-        session.post(login_url, data=payload, headers=headers)
-    else:
-        print("WARNING: Email/Password secrets missing. The protected /my-team/ endpoint will fail.")
-    
-    # Fetch public bootstrap data
-    bootstrap_resp = session.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
-    if bootstrap_resp.status_code != 200:
-        print(f"ERROR: Failed to fetch bootstrap. HTTP {bootstrap_resp.status_code}")
+    # 1. Fetch public bootstrap data
+    try:
+        bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
+        bootstrap_data = bootstrap_resp.json()
+    except Exception as e:
+        print(f"ERROR fetching bootstrap: {e}")
         sys.exit(1)
         
-    bootstrap_data = bootstrap_resp.json()
-    
     current_gw = next((e for e in bootstrap_data["events"] if e.get("is_current")), None)
     next_gw = next((e for e in bootstrap_data["events"] if e.get("is_next")), None)
     target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     
-    # Fetch private team data (Bank & Transfers)
-    team_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/my-team/"
-    team_resp = session.get(team_url, headers=headers)
+    # 2. Fetch public team history to get bank data WITHOUT login
+    team_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
+    bank = "Unknown (Check manually if making early transfers)"
+    free_transfers = "Unknown (Check manually)"
     
-    if team_resp.status_code == 200:
-        team_data = team_resp.json()
-        bank = team_data.get("transfers", {}).get("bank", 0) / 10.0
-        limit = team_data.get("transfers", {}).get("limit", 1)
-        made = team_data.get("transfers", {}).get("made", 0)
-        free_transfers = limit - made
-    else:
-        print(f"ERROR: Could not fetch private team data. HTTP {team_resp.status_code}. Using fallback values.")
-        bank = "Unknown"
-        free_transfers = "Unknown"
+    try:
+        team_resp = requests.get(team_url, headers=headers)
+        if team_resp.status_code == 200:
+            history_data = team_resp.json()
+            if history_data.get("current"):
+                # Get the bank from the most recently completed Gameweek
+                last_gw_data = history_data["current"][-1]
+                bank = last_gw_data.get("bank", 0) / 10.0
+                free_transfers = "1+ (Confirm exact max bank manually)"
+        else:
+            print(f"WARNING: Could not fetch public history. HTTP {team_resp.status_code}.")
+    except Exception as e:
+        print(f"WARNING: Error fetching history: {e}")
         
     return target_gw, bank, free_transfers
 
@@ -79,7 +67,7 @@ def build_prompt(target_gw, bank, free_transfers):
     Run the {action_type} for Gameweek {target_gw}.
     
     ### CURRENT SQUAD STATE & ECONOMICS
-    - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers} (Max 5)
+    - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
     
     ### AUTOMATED LIVE DATA SEARCH PROTOCOL
     Before processing, execute a live web search to pull the latest fixture state:
@@ -99,7 +87,7 @@ def main():
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash',
+            model='gemini-2.5-flash', # Adjust if you prefer gemini-2.5-pro
             contents=prompt,
             config={
                 "system_instruction": "You are an institutional-grade Quantitative Fantasy Premier League Analyst... [PASTE ENTIRE V5 MASTER INSTRUCTION HERE]"
