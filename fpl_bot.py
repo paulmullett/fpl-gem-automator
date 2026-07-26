@@ -43,7 +43,7 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/1.6"}
+    headers = {"User-Agent": "FPL-Auto-Script/1.7"}
     
     # 1. Fetch bootstrap static to build current player database
     try:
@@ -67,6 +67,29 @@ def get_fpl_data():
             "status": p["status"],
             "news": p["news"]
         }
+        
+    # Build a "Smart 120" Active Market Watchlist (Top 30 per position)
+    # Filter for active ('a') or minor doubtful ('d') players only. 
+    # Ignores unavailable ('u'), suspended ('s'), or injured ('i') players.
+    available_players = [p for p in bootstrap_data["elements"] if p["status"] in ["a", "d"]]
+    
+    market_list = []
+    # 1=GK, 2=DEF, 3=MID, 4=FWD
+    for pos_id in [1, 2, 3, 4]: 
+        pos_players = [p for p in available_players if p["element_type"] == pos_id]
+        # Sort by ownership to get the most relevant 30 for each position
+        top_pos = sorted(pos_players, key=lambda x: float(x["selected_by_percent"]), reverse=True)[:30]
+        
+        for p in top_pos:
+            name = p["web_name"]
+            team = teams.get(p["team"], "UNK")
+            pos = element_types.get(p["element_type"], "UNK")
+            cost = p["now_cost"] / 10.0
+            own = p["selected_by_percent"]
+            status = p["status"]
+            market_list.append(f"- {name} ({team}, {pos}, £{cost}m, {own}% owned, Status: {status})")
+            
+    market_str = "\n".join(market_list)
         
     current_gw = next((e for e in bootstrap_data["events"] if e.get("is_current")), None)
     next_gw = next((e for e in bootstrap_data["events"] if e.get("is_next")), None)
@@ -106,9 +129,9 @@ def get_fpl_data():
 
     squad_str = "\n".join(squad_list) if squad_list else "Squad picks not yet public/locked for this gameweek."
     
-    return target_gw, bank, free_transfers, squad_str
+    return target_gw, bank, free_transfers, squad_str, market_str
 
-def build_prompt(target_gw, bank, free_transfers, squad_str, live_news):
+def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_news):
     day_of_week = datetime.datetime.today().weekday()
     
     if WORKFLOW_INPUT == "monday" or (WORKFLOW_INPUT == "auto" and day_of_week <= 2):
@@ -125,13 +148,18 @@ def build_prompt(target_gw, bank, free_transfers, squad_str, live_news):
     - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
     - ACTUAL 15-PLAYER SQUAD:
 {squad_str}
+
+    ### ACTIVE 2026/27 TRANSFER MARKET WATCHLIST
+    The following are the top 50 most relevant players in the game currently. 
+    YOU MAY ONLY RECOMMEND INCOMING TRANSFERS FROM THIS SPECIFIC LIST:
+{market_str}
     
     {live_news}
     
     ### MANDATORY ANALYTICAL CONSTRAINTS
     1. Base all transfer and squad analysis STRICTLY on the actual 15 players listed in the current squad state above.
-    2. Do NOT hallucinate players who are not currently active in the Premier League.
-    3. Evaluate transfer replacements using active player assets from the current season.
+    2. Do NOT hallucinate players who are not currently active in the Premier League (e.g. Mo Salah).
+    3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided.
     
     ### DATA INSTRUCTIONS FOR EVALUATION
     {focus_instructions}
@@ -155,11 +183,11 @@ def send_to_discord(webhook_url, text):
         requests.post(webhook_url, json={"content": current_chunk})
 
 def main():
-    target_gw, bank, free_transfers, squad_str = get_fpl_data()
+    target_gw, bank, free_transfers, squad_str, market_str = get_fpl_data()
     print("--- FETCHING LIVE WEB SEARCH DATA ---")
     live_news = get_live_fpl_news()
     
-    prompt = build_prompt(target_gw, bank, free_transfers, squad_str, live_news)
+    prompt = build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_news)
     
     print("--- DATA FETCHED ---")
     print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers}")
@@ -170,7 +198,8 @@ def main():
             model='gemini-3.6-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION
+                system_instruction=SYSTEM_INSTRUCTION,
+                temperature=0.2 # Lowering temperature stops it from creatively hallucinating outside parameters
             )
         )
     except Exception as e:
