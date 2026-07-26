@@ -152,7 +152,7 @@ def main():
     
     try:
         response = client.models.generate_content(
-            model='emini-1.5-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
