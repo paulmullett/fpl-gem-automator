@@ -37,6 +37,11 @@ def get_live_fpl_news():
         news_text += "\n--- INJURY UPDATES (Ben Dinnery) ---\n"
         for r in dinnery_results:
             news_text += f"- {r.get('body', '')}\n"
+            
+        long_term_results = DDGS().text("Premier League long term injuries ACL out for months", max_results=3)
+        news_text += "\n--- LONG TERM INJURIES (Cross-Reference List) ---\n"
+        for r in long_term_results:
+            news_text += f"- {r.get('body', '')}\n"
     except Exception as e:
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
         
@@ -145,7 +150,7 @@ def get_fpl_data():
     squad_str = "\n".join(squad_list) if squad_list else "Squad picks not yet public/locked for this gameweek."
     
     return target_gw, bank, free_transfers, squad_str, market_str
-
+    
 def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_news):
     day_of_week = datetime.datetime.today().weekday()
     
@@ -175,6 +180,7 @@ def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_ne
     1. Base all transfer and squad analysis STRICTLY on the actual 15 players listed in the current squad state above. Read any appended injury FLAGs carefully.
     2. Do NOT hallucinate players who are not currently active in the Premier League.
     3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided. Drop any players from consideration if their FLAG indicates a serious injury.
+    4. LIVE NEWS OVERRIDE: You must meticulously cross-reference the Market Watchlist against the LIVE ITK NEWS and LONG TERM INJURIES sections. If the live news states a player is injured (e.g., Gabriel, Saliba, etc.), you MUST treat them as having 0 xMins and ban them from transfer consideration, even if the official FPL Watchlist lists them as fit.
     
     ### DATA INSTRUCTIONS FOR EVALUATION
     {focus_instructions}
