@@ -28,13 +28,11 @@ def get_live_fpl_news():
     """Executes a free web search to inject live ITK data into the prompt."""
     news_text = "### LIVE ITK NEWS & SCHEDULE DATA (Automatically Fetched)\n"
     try:
-        # Search for fixture changes
         crellin_results = DDGS().text("Ben Crellin FPL blank double gameweek updates", max_results=3)
         news_text += "--- SCHEDULE CHANGES (Ben Crellin) ---\n"
         for r in crellin_results:
             news_text += f"- {r.get('body', '')}\n"
             
-        # Search for injury news
         dinnery_results = DDGS().text("Ben Dinnery FPL injuries team news press conference", max_results=3)
         news_text += "\n--- INJURY UPDATES (Ben Dinnery) ---\n"
         for r in dinnery_results:
@@ -45,8 +43,9 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/1.5"}
+    headers = {"User-Agent": "FPL-Auto-Script/1.6"}
     
+    # 1. Fetch bootstrap static to build current player database
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
         bootstrap_data = bootstrap_resp.json()
@@ -54,28 +53,62 @@ def get_fpl_data():
         print(f"ERROR fetching bootstrap data: {e}")
         sys.exit(1)
         
+    teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
+    element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
+    
+    # Map all active players
+    players = {}
+    for p in bootstrap_data["elements"]:
+        players[p["id"]] = {
+            "name": p["web_name"],
+            "team": teams.get(p["team"], "UNK"),
+            "pos": element_types.get(p["element_type"], "UNK"),
+            "cost": p["now_cost"] / 10.0,
+            "status": p["status"],
+            "news": p["news"]
+        }
+        
     current_gw = next((e for e in bootstrap_data["events"] if e.get("is_current")), None)
     next_gw = next((e for e in bootstrap_data["events"] if e.get("is_next")), None)
-    target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     
-    team_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
-    bank = "Unknown (Check manually if making early transfers)"
-    free_transfers = "Unknown (Check manually)"
+    target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
+    active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
+    
+    # 2. Fetch user history for bank balance
+    team_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
+    bank = "0.0"
+    free_transfers = "1+"
     
     try:
-        team_resp = requests.get(team_url, headers=headers)
-        if team_resp.status_code == 200:
-            history_data = team_resp.json()
-            if history_data.get("current"):
-                last_gw_data = history_data["current"][-1]
-                bank = last_gw_data.get("bank", 0) / 10.0
-                free_transfers = "1+ (Confirm exact count manually)"
+        hist_resp = requests.get(team_history_url, headers=headers)
+        if hist_resp.status_code == 200:
+            h_data = hist_resp.json()
+            if h_data.get("current"):
+                last_gw_data = h_data["current"][-1]
+                bank = str(last_gw_data.get("bank", 0) / 10.0)
     except Exception as e:
         print(f"WARNING: Error fetching history: {e}")
         
-    return target_gw, bank, free_transfers
+    # 3. Fetch user's actual 15-player squad
+    squad_list = []
+    squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
+    try:
+        squad_resp = requests.get(squad_url, headers=headers)
+        if squad_resp.status_code == 200:
+            picks_data = squad_resp.json()
+            for pick in picks_data.get("picks", []):
+                p_info = players.get(pick["element"], {})
+                role = "Starter" if pick["position"] <= 11 else "Bench"
+                cap = " (C)" if pick.get("is_captain") else (" (VC)" if pick.get("is_vice_captain") else "")
+                squad_list.append(f"- {p_info.get('name', 'Unknown')} ({p_info.get('team')}, {p_info.get('pos')}, £{p_info.get('cost')}m) - {role}{cap}")
+    except Exception as e:
+        print(f"WARNING: Error fetching squad picks: {e}")
 
-def build_prompt(target_gw, bank, free_transfers, live_news):
+    squad_str = "\n".join(squad_list) if squad_list else "Squad picks not yet public/locked for this gameweek."
+    
+    return target_gw, bank, free_transfers, squad_str
+
+def build_prompt(target_gw, bank, free_transfers, squad_str, live_news):
     day_of_week = datetime.datetime.today().weekday()
     
     if WORKFLOW_INPUT == "monday" or (WORKFLOW_INPUT == "auto" and day_of_week <= 2):
@@ -90,13 +123,20 @@ def build_prompt(target_gw, bank, free_transfers, live_news):
     
     ### CURRENT SQUAD STATE & ECONOMICS
     - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
+    - ACTUAL 15-PLAYER SQUAD:
+{squad_str}
     
     {live_news}
+    
+    ### MANDATORY ANALYTICAL CONSTRAINTS
+    1. Base all transfer and squad analysis STRICTLY on the actual 15 players listed in the current squad state above.
+    2. Do NOT hallucinate players who are not currently active in the Premier League.
+    3. Evaluate transfer replacements using active player assets from the current season.
     
     ### DATA INSTRUCTIONS FOR EVALUATION
     {focus_instructions}
     
-    Execute the full 5-section quantitative breakdown based on your system instructions, using the fetched live data above to process any xMins overrides.
+    Execute the full 5-section quantitative breakdown based strictly on your system instructions.
     """
     return prompt
 
@@ -115,11 +155,11 @@ def send_to_discord(webhook_url, text):
         requests.post(webhook_url, json={"content": current_chunk})
 
 def main():
-    target_gw, bank, free_transfers = get_fpl_data()
+    target_gw, bank, free_transfers, squad_str = get_fpl_data()
     print("--- FETCHING LIVE WEB SEARCH DATA ---")
     live_news = get_live_fpl_news()
     
-    prompt = build_prompt(target_gw, bank, free_transfers, live_news)
+    prompt = build_prompt(target_gw, bank, free_transfers, squad_str, live_news)
     
     print("--- DATA FETCHED ---")
     print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers}")
