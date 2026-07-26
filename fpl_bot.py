@@ -43,7 +43,7 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/1.7"}
+    headers = {"User-Agent": "FPL-Auto-Script/1.8"}
     
     # 1. Fetch bootstrap static to build current player database
     try:
@@ -68,26 +68,37 @@ def get_fpl_data():
             "news": p["news"]
         }
         
-    # Build a "Smart 120" Active Market Watchlist (Top 30 per position)
-    # Filter for active ('a') or minor doubtful ('d') players only. 
-    # Ignores unavailable ('u'), suspended ('s'), or injured ('i') players.
-    available_players = [p for p in bootstrap_data["elements"] if p["status"] in ["a", "d"]]
+    # Build a "Smart 120" Active Market Watchlist
+    available_players = []
+    for p in bootstrap_data["elements"]:
+        status = p.get("status", "a")
+        chance_next = p.get("chance_of_playing_next_round")
+        
+        # Hard drop players officially ruled out (0% chance) or fully flagged
+        # Note: chance_next is 'None' when a player is 100% fit
+        if chance_next in [0, "0"] or status in ["i", "s", "u", "n"]:
+            continue
+            
+        available_players.append(p)
     
     market_list = []
     # 1=GK, 2=DEF, 3=MID, 4=FWD
     for pos_id in [1, 2, 3, 4]: 
         pos_players = [p for p in available_players if p["element_type"] == pos_id]
-        # Sort by ownership to get the most relevant 30 for each position
-        top_pos = sorted(pos_players, key=lambda x: float(x["selected_by_percent"]), reverse=True)[:30]
+        top_pos = sorted(pos_players, key=lambda x: float(x.get("selected_by_percent", 0)), reverse=True)[:30]
         
         for p in top_pos:
             name = p["web_name"]
             team = teams.get(p["team"], "UNK")
             pos = element_types.get(p["element_type"], "UNK")
             cost = p["now_cost"] / 10.0
-            own = p["selected_by_percent"]
-            status = p["status"]
-            market_list.append(f"- {name} ({team}, {pos}, £{cost}m, {own}% owned, Status: {status})")
+            own = p.get("selected_by_percent", 0)
+            status = p.get("status", "a")
+            news = p.get("news", "")
+            
+            # Inject the exact injury news into the string if it exists
+            news_flag = f" | FLAG: {news}" if news else ""
+            market_list.append(f"- {name} ({team}, {pos}, £{cost}m, {own}% owned, Status: {status}{news_flag})")
             
     market_str = "\n".join(market_list)
         
@@ -123,7 +134,11 @@ def get_fpl_data():
                 p_info = players.get(pick["element"], {})
                 role = "Starter" if pick["position"] <= 11 else "Bench"
                 cap = " (C)" if pick.get("is_captain") else (" (VC)" if pick.get("is_vice_captain") else "")
-                squad_list.append(f"- {p_info.get('name', 'Unknown')} ({p_info.get('team')}, {p_info.get('pos')}, £{p_info.get('cost')}m) - {role}{cap}")
+                
+                # Fetch news for squad members too so AI can assess current injuries
+                s_news = p_info.get("news", "")
+                s_news_flag = f" | FLAG: {s_news}" if s_news else ""
+                squad_list.append(f"- {p_info.get('name', 'Unknown')} ({p_info.get('team')}, {p_info.get('pos')}, £{p_info.get('cost')}m) - {role}{cap}{s_news_flag}")
     except Exception as e:
         print(f"WARNING: Error fetching squad picks: {e}")
 
@@ -150,16 +165,16 @@ def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_ne
 {squad_str}
 
     ### ACTIVE 2026/27 TRANSFER MARKET WATCHLIST
-    The following are the top 50 most relevant players in the game currently. 
+    The following are the top 120 most relevant active players in the game currently, split by position. 
     YOU MAY ONLY RECOMMEND INCOMING TRANSFERS FROM THIS SPECIFIC LIST:
 {market_str}
     
     {live_news}
     
     ### MANDATORY ANALYTICAL CONSTRAINTS
-    1. Base all transfer and squad analysis STRICTLY on the actual 15 players listed in the current squad state above.
-    2. Do NOT hallucinate players who are not currently active in the Premier League (e.g. Mo Salah).
-    3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided.
+    1. Base all transfer and squad analysis STRICTLY on the actual 15 players listed in the current squad state above. Read any appended injury FLAGs carefully.
+    2. Do NOT hallucinate players who are not currently active in the Premier League.
+    3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided. Drop any players from consideration if their FLAG indicates a serious injury.
     
     ### DATA INSTRUCTIONS FOR EVALUATION
     {focus_instructions}
@@ -199,7 +214,7 @@ def main():
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
-                temperature=0.2 # Lowering temperature stops it from creatively hallucinating outside parameters
+                temperature=0.2 
             )
         )
     except Exception as e:
