@@ -87,7 +87,7 @@ def main():
     
     try:
         response = client.models.generate_content(
-            model='gemini-2.5-flash', # Adjust if you prefer gemini-2.5-pro
+            model='gemini-3.6-flash',
             contents=prompt,
             config={
                 "system_instruction": "You are an institutional-grade Quantitative Fantasy Premier League Analyst... [PASTE ENTIRE V5 MASTER INSTRUCTION HERE]"
