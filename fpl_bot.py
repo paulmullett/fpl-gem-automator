@@ -85,6 +85,10 @@ def main():
     target_gw, bank, free_transfers = get_fpl_data()
     prompt = build_prompt(target_gw, bank, free_transfers)
     
+    print(f"--- DATA FETCHED ---")
+    print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers}")
+    print("--- QUERYING GEMINI API ---")
+    
     try:
         response = client.models.generate_content(
             model='gemini-3.6-flash',
@@ -97,12 +101,21 @@ def main():
         print(f"CRITICAL ERROR generating content with Gemini: {str(e)}")
         sys.exit(1)
         
-    content = response.text
-    for i in range(0, len(content), 1900):
-        chunk = content[i:i+1900]
-        discord_resp = requests.post(DISCORD_WEBHOOK_URL, json={"content": f"```markdown\n{chunk}\n```"})
+    content = response.text if response and response.text else ""
+    print(f"--- GEMINI RESPONSE RECEIVED ({len(content)} characters) ---")
+    
+    if not content:
+        print("ERROR: Gemini returned an empty response string.")
+        sys.exit(1)
+        
+    # Send to Discord in 1700-character clean chunks without backtick wrapping
+    for i in range(0, len(content), 1700):
+        chunk = content[i:i+1700]
+        discord_resp = requests.post(DISCORD_WEBHOOK_URL, json={"content": chunk})
+        print(f"Discord POST HTTP Status: {discord_resp.status_code}")
+        
         if discord_resp.status_code not in [200, 204]:
-            print(f"WARNING: Failed to send to Discord. HTTP {discord_resp.status_code}")
+            print(f"DISCORD ERROR RESPONSE: {discord_resp.text}")
 
 if __name__ == "__main__":
     main()
