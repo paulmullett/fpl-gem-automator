@@ -1,0 +1,44 @@
+name: FPL Automated Strategy Engine
+
+on:
+  # 1. Automated Schedule (Cron)
+  schedule:
+    # Runs at 09:00 UTC every Monday (Market Assessment)
+    - cron: '0 9 * * 1'
+    # Runs at 12:00 UTC every Friday (Deadline Execution)
+    - cron: '0 12 * * 5'
+  
+  # 2. Manual Trigger Button
+  workflow_dispatch:
+    inputs:
+      prompt_type:
+        description: 'Force Prompt Type (monday or friday)'
+        required: true
+        default: 'friday'
+        type: choice
+        options:
+          - monday
+          - friday
+
+jobs:
+  run-fpl-engine:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install requests google-genai
+
+      - name: Execute FPL Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          MANUAL_TRIGGER: ${{ github.event.inputs.prompt_type || 'auto' }}
+        run: python fpl_bot.py
