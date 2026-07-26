@@ -35,16 +35,12 @@ jobs:
       - name: Install dependencies
         run: pip install requests google-genai
 
-- name: Execute FPL Bot
+      - name: Execute FPL Bot
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           FPL_EMAIL: ${{ secrets.FPL_EMAIL }}
           FPL_PASSWORD: ${{ secrets.FPL_PASSWORD }}
-          MANUAL_TRIGGER: ${{ github.event.inputs.prompt_type || 'auto' }}
-        run: python fpl_bot.py
-          
-          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           MANUAL_TRIGGER: ${{ github.event.inputs.prompt_type || 'auto' }}
         run: python fpl_bot.py
