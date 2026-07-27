@@ -573,12 +573,33 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     if target_gw == 1 or "Unlimited" in str(free_transfers):
         gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore point-hit constraints (Law 4)."
 
-    action_type = "Full Weekly Execution & Analytical Breakdown"
-    
-    focus_instructions = """1. 11-Man Verification Lock: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.
-    2. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
-    3. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
-    4. MANDATORY SIGN-OFF: Conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block mirroring the exact locked structure provided."""
+    # Adapt analytical focus based on manual input trigger
+    if WORKFLOW_INPUT == "post_gameweek_review":
+        action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
+        phase_instructions = """
+    - Focus heavily on post-mortem recalibration results from the previous Gameweek.
+    - Evaluate early transfer moves to catch impending price rises or dodge price crashes.
+    - Focus on structural squad health, bank reservation strategy, and long-term 4-GW rolling planning.
+        """
+    elif WORKFLOW_INPUT == "pre_gameweek_deadline":
+        action_type = "Pre-Gameweek Final Deadline Lock & Late ITK Leak Audit"
+        phase_instructions = """
+    - Focus heavily on verified press conference news, injury updates, and late lineup leaks.
+    - Apply Law 5 (15-Minute Panic Rule) if late leaks alter team selections.
+    - Confirm absolute final Starting XI, Captaincy, Vice-Captaincy, and bench order before deadline.
+        """
+    else:
+        action_type = "Full Weekly Execution & Analytical Breakdown"
+        phase_instructions = """
+    - Provide a complete balanced breakdown covering both transfer economics and upcoming fixture geometry.
+        """
+
+    focus_instructions = f"""1. 11-Man Verification Lock: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.
+    2. Phase-Specific Focus ({action_type}):
+{phase_instructions}
+    3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
+    4. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
+    5. MANDATORY SIGN-OFF: Conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block mirroring the exact locked structure provided."""
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
