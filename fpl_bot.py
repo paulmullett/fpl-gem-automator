@@ -595,37 +595,38 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
 
     if WORKFLOW_INPUT == "post_gameweek_review":
         action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
-        phase_instructions = """
-    - Focus heavily on post-mortem recalibration results from the previous Gameweek.
-    - Evaluate early transfer moves to catch impending price rises or dodge price crashes.
-    - Focus on structural squad health, bank reservation strategy, and long-term 4-GW rolling planning.
-        """
+        phase_instructions = (
+            "- Focus heavily on post-mortem recalibration results from the previous Gameweek.\n"
+            "- Evaluate early transfer moves to catch impending price rises or dodge price crashes.\n"
+            "- Focus on structural squad health, bank reservation strategy, and long-term 4-GW rolling planning."
+        )
     elif WORKFLOW_INPUT == "pre_gameweek_deadline":
         action_type = "Pre-Gameweek Final Deadline Lock & Late ITK Leak Audit"
-        phase_instructions = """
-    - Focus heavily on verified press conference news, injury updates, and late lineup leaks.
-    - Apply Law 5 (15-Minute Panic Rule) if late leaks alter team selections.
-    - Confirm absolute final Starting XI, Captaincy, Vice-Captaincy, and bench order before deadline.
-        """
+        phase_instructions = (
+            "- Focus heavily on verified press conference news, injury updates, and late lineup leaks.\n"
+            "- Apply Law 5 (15-Minute Panic Rule) if late leaks alter team selections.\n"
+            "- Confirm absolute final Starting XI, Captaincy, Vice-Captaincy, and bench order before deadline."
+        )
     else:
         action_type = "Full Weekly Execution & Analytical Breakdown"
-        phase_instructions = """
-    - Provide a complete balanced breakdown covering both transfer economics and upcoming fixture geometry.
-        """
+        phase_instructions = (
+            "- Provide a complete balanced breakdown covering both transfer economics and upcoming fixture geometry."
+        )
 
-    focus_instructions = f"""1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order. 
-    2. Phase-Specific Focus ({action_type}):
-{phase_instructions}
-    3. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions rather than enforced automated alterations.
-    4. Analytical Justification: Provide the Quantitative Trade-off Summary as compact bullet points per player (avoid wide Markdown tables) and explain geometric mismatches (Law 3).
-    5. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
-    6. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
+    focus_instructions = (
+        f"1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.\n"
+        f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
+        f"3. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions rather than enforced automated alterations.\n"
+        f"4. Analytical Justification: Provide the Quantitative Trade-off Summary as compact bullet points per player (avoid wide Markdown tables) and explain geometric mismatches (Law 3).\n"
+        f"5. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.\n"
+        f"6. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."
+    )
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
     
     ### CURRENT SQUAD STATE & ECONOMICS
-    - Current Bank Balance: \u00a3{bank}m | Saved Free Transfers: {free_transfers}
+    - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
     
 {locked_squad_str}
 
