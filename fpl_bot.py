@@ -186,16 +186,44 @@ def get_live_fpl_news():
 
 # 4. Calibrated Expected Value Engine
 
-def get_base_ev(p, weights):
+def estimate_xmins(p):
+    """Calculates realistic xMins based on FPL ownership crowd wisdom and price tiers."""
     chance = p.get("chance_of_playing_next_round")
     if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
-        return -100.0  
+        return 0
+    
+    own = float(p.get("own", 0.0))
+    cost = float(p.get("cost", 0.0))
+    
+    # Premium assets (£8.0m+) are almost always nailed starters
+    if cost >= 8.0:
+        return 85 if own >= 1.0 else 60
+        
+    # Mid-priced players (£6.0m - £7.5m)
+    if cost >= 6.0:
+        if own >= 3.0: return 85
+        elif own >= 1.0: return 60
+        else: return 30
+        
+    # Budget assets (£4.5m - £5.5m) - CRITICAL FIX FOR BACKUPS
+    if own >= 5.0:
+        return 85  # Nailed budget starter (e.g., Andersen, Pickford)
+    elif own >= 1.5:
+        return 65  # Rotational starter
+    else:
+        # < 1.5% ownership for a £5.0m+ player means they are a BACKUP (e.g., Meslier, Palestra)
+        return 5 if cost >= 4.5 else 0
+
+def get_base_ev(p, weights):
+    xmins = estimate_xmins(p)
+    if xmins < 15:
+        # Disqualifies backups from generating meaningful EV
+        return -100.0 if xmins == 0 else 0.5  
         
     try:
         ep = float(p.get("ep_next", 0.0))
         xgi = float(p.get("xgi_90", 0.0))
         xgc = float(p.get("xgc_90", 0.0))
-        ownership = float(p.get("own", 0.0))
         xgi_mult = weights.get("xgi_weight", 0.70)
         
         if ep <= 0.0:
@@ -203,10 +231,8 @@ def get_base_ev(p, weights):
             form = float(p.get("form", 0.0))
             ep = (tp / 38.0) + form
 
-        # GUARDRAIL: Penalize anomalies. If ownership is under 1.0% and they are not a premium, 
-        # heavily cap their xGI influence to prevent small-sample "Per 90" glitches.
-        if ownership < 1.0 and p["cost"] < 6.0:
-            xgi = xgi * 0.2 
+        # Scale output by realistic minutes
+        mins_factor = xmins / 90.0
 
         if p["pos_id"] in [3, 4]: 
             ep = (ep * (1.0 - (xgi_mult / 2.0))) + (xgi * (xgi_mult * 2.8))
@@ -217,7 +243,7 @@ def get_base_ev(p, weights):
             cs_boost = max(0, 1.5 - xgc)
             ep = (ep * 0.7) + (cs_boost * 1.5)
             
-        return ep
+        return ep * mins_factor
     except:
         return 0.0
 
@@ -281,11 +307,16 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
         
+        p = players_dict[i]
+        
         if i not in current_squad_ids:
-            p = players_dict[i]
             chance = p.get("chance_of_playing_next_round")
             if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
+                
+        # HARD BAN: Prevent backups (< 45 estimated mins) from being placed in the Starting XI
+        if estimate_xmins(p) < 45:
+            prob += starter_vars[i] == 0
 
     # Squad Composition Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
