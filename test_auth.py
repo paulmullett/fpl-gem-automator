@@ -12,7 +12,16 @@ if not all([FPL_EMAIL, FPL_PASSWORD, FPL_TEAM_ID]):
 
 def test_fpl_authentication():
     session = requests.Session()
-    login_url = "https://users.premierleague.com/accounts/login/"
+    
+    # 1. Correct Active Authentication Endpoint
+    login_url = "https://users.auth.premierleague.com/accounts/login/"
+    
+    # Standard headers to mimic browser authentication
+    session.headers.update({
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Referer": "https://fantasy.premierleague.com/"
+    })
+    
     payload = {
         "login": FPL_EMAIL,
         "password": FPL_PASSWORD,
@@ -25,12 +34,15 @@ def test_fpl_authentication():
     try:
         login_response = session.post(login_url, data=payload)
         
-        if 'pl_profile' not in session.cookies.get_dict():
-            print("AUTH FAILED: Incorrect credentials, 2FA prompt triggered, or login endpoint blocked.")
+        # Check for active pl_profile session token
+        cookies = session.cookies.get_dict()
+        if 'pl_profile' not in cookies:
+            print(f"AUTH FAILED: Status {login_response.status_code}. 'pl_profile' cookie missing.")
             sys.exit(1)
             
         print("AUTH SUCCESS: Active 'pl_profile' session cookie acquired.")
         
+        # 2. Access Private My-Team Endpoint
         my_team_url = f"https://fantasy.premierleague.com/api/my-team/{FPL_TEAM_ID}/"
         team_response = session.get(my_team_url)
         
