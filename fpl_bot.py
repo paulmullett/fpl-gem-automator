@@ -35,6 +35,7 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 - BPS Dribbler Buff: The -1 BPS penalty for being tackled has been removed. You must upgrade the projected BPS of direct, high-volume dribbling wingers and full-backs.
 - BPS Penalty Flattening: Penalty goals are now a flat 12 BPS for all positions. You must manually strip out historical BPS spikes when projecting premium penalty-taking midfielders and forwards.
 - Goalkeeper Save/Variance Balance: Goalkeepers earn 2 BPS per save, +1 for inside the box, +1 for big chances. However, FPL penalizes -1 point per 2 goals conceded. You must ONLY target high-save goalkeepers if their team concedes <1.5 Expected Goals Against (xGA) per match. Do not recommend goalkeepers facing heavy bombardment without a solid xGA baseline.
+- Bench Fodder Exemption: Players priced at £4.0m or £4.5m who are strictly assigned to Bench Slots 3 and 4 are exempt from minimum DefCon or Goalkeeper xGA baseline thresholds. Do not discard viable bench fodder solely for failing starter metric requirements.
 
 3. SPATIAL GEOMETRY & FLANK MISMATCHES
 - Do not evaluate overall team defense vs overall team attack. You must cross-reference an attacker's primary pitch zone with the opposition's specific spatial weaknesses.
@@ -98,7 +99,7 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/2.2"}
+    headers = {"User-Agent": "FPL-Auto-Script/2.4"}
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -204,18 +205,17 @@ def get_fpl_data():
     return target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str
 
 def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str, live_news):
-    day_of_week = datetime.datetime.today().weekday()
-    
     gw1_override = ""
     if target_gw == 1 or "Unlimited" in str(free_transfers):
         gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore all point-hit penalty constraints (Law 4). Evaluate and suggest the absolute mathematically optimal 15-player squad setup without any transfer cost restrictions."
 
-    if WORKFLOW_INPUT == "monday" or (WORKFLOW_INPUT == "auto" and day_of_week <= 2):
-        action_type = "Monday Market Assessment & FPL Optimization Protocol"
-        focus_instructions = "1. Price Volatility Check\n2. Transfer Banking EV\n3. Macro Chip Alignment"
-    else:
-        action_type = "Friday Execution Protocol"
-        focus_instructions = "1. Finalize Starting XI and Bench Order\n2. Calculate Captain and Vice-Captain EV\n3. Recalculate all xMins based strictly on the provided Live ITK News.\n4. MANDATORY SIGN-OFF: You must conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block. This must clearly list the 11 Starters (with formation), the Captain (C), the Vice-Captain (VC), the exact Bench order (1 to 4), and any Active Chips."
+    action_type = "Full Weekly Execution & Optimization Protocol"
+    
+    # Unified core instructions explicitly applied for ALL runs to dampen volatility
+    focus_instructions = """1. 11-Man Verification Lock: You must mathematically verify and explicitly output a legal 11-man starting lineup and 4-man bench. DO NOT drop players from the final output.
+    2. Deterministic Core Evaluation: Calculate Expected Value (EV) and Captaincy strictly using the data provided. Do not alter structural anchors or captaincy selections randomly; remain completely quantitative.
+    3. Transfer Economics & Chip Status: Outline banking EV, market volatility, and macro chip alignment.
+    4. MANDATORY SIGN-OFF: You must conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block. This must clearly list the 11 Starters (with formation), the Captain (C), the Vice-Captain (VC), the exact Bench order (1 to 4), and any Active Chips."""
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
