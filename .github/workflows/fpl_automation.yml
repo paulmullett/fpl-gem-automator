@@ -2,8 +2,18 @@ name: FPL Automated Tactical Engine
 
 on:
   schedule:
-    - cron: '0 8 * * 1,5' # Runs Mondays and Fridays at 08:00 UTC
+    - cron: '0 8 * * 1,5' # Background baseline checks
   workflow_dispatch:
+    inputs:
+      execution_mode:
+        description: 'Select Tactical Execution Mode'
+        required: true
+        default: 'auto'
+        type: choice
+        options:
+          - auto
+          - post_gameweek_review
+          - pre_gameweek_deadline
 
 jobs:
   run-fpl-bot:
@@ -25,6 +35,7 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          MANUAL_TRIGGER: ${{ inputs.execution_mode || 'auto' }}
         run: python fpl_bot.py
 
       - name: Commit State Persistence File
