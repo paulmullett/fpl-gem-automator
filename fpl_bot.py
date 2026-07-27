@@ -1,5 +1,6 @@
 import os
 import sys
+import json
 import requests
 import datetime
 import pulp
@@ -7,15 +8,14 @@ from google import genai
 from google.genai import types
 from ddgs import DDGS
 
-# 1. Load Environment Variables
+# 1. Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
-WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
+STATE_FILE_PATH = "fpl_state.json"
 
-# 2. Pre-Flight Check
 if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
-    print("CRITICAL ERROR: Missing base GitHub Secrets.")
+    print("CRITICAL ERROR: Missing GitHub Secrets (GEMINI_API_KEY, DISCORD_WEBHOOK_URL, or FPL_TEAM_ID).")
     sys.exit(1)
 
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -26,58 +26,68 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 ### CORE ANALYTICAL LAWS & METRIC DEFINITIONS
 
 1. GAME-STATE NORMALISED ATTACKING & ACCIDENTAL ASSISTS
-- Game-State Filter: You must normalize non-penalty expected goals (npxG) and expected assisted goals (xAG) strictly to periods when the game state is level (0-0, 1-1) or trailing. Exclude all scoreline-skewed "garbage time" data when a team is leading by 2+ goals.
-- Finisher's Multiplier: Never project points using raw xG alone. Apply a multiplier based on a player's multi-season conversion history over their xG to accurately value elite shot placement versus low-efficiency volume shooters.
-- Accidental Assist Rule: FPL awards assists for deflected passes if there is only one defensive touch inside the box. Therefore, track and prioritize "Raw Crosses into the Penalty Box" alongside xAG to raise the points ceiling for high-volume wide players.
+- Game-State Filter: Normalize non-penalty expected goals (npxG) and expected assisted goals (xAG) strictly to periods when the game state is level (0-0, 1-1) or trailing. Exclude all scoreline-skewed "garbage time" data when a team is leading by 2+ goals.
+- Finisher's Multiplier: Apply a multiplier based on a player's multi-season conversion history over their xG to accurately value elite shot placement versus low-efficiency volume shooters.
+- Accidental Assist Rule: FPL awards assists for deflected passes if there is only one defensive touch inside the box. Prioritize "Raw Crosses into the Penalty Box" alongside xAG to raise the points ceiling for high-volume wide players.
 
 2. DEFENSIVE CONTRIBUTION (DefCon) & 2026/27 BPS MATHEMATICS
-- DefCon Thresholds: A 2-point floor is awarded for 10 CBIT (Clearances, Blocks, Interceptions, Tackles) for defenders, and 12 CBIRT (+ Recoveries) for midfielders/forwards. You must exclusively target baseline assets averaging >8.5 CBIT or >10.5 CBIRT per 90 minutes.
-- BPS Centre-Back Nerf: Centre-backs now earn 1 BPS per 3 CBI actions (down from 2). You must downgrade pure centre-backs in bonus point projections.
-- BPS Dribbler Buff: The -1 BPS penalty for being tackled has been removed. You must upgrade the projected BPS of direct, high-volume dribbling wingers and full-backs.
-- BPS Penalty Flattening: Penalty goals are now a flat 12 BPS for all positions. You must manually strip out historical BPS spikes when projecting premium penalty-taking midfielders and forwards.
-- Goalkeeper Save/Variance Balance: Goalkeepers earn 2 BPS per save, +1 for inside the box, +1 for big chances. However, FPL penalizes -1 point per 2 goals conceded. You must ONLY target high-save goalkeepers if their team concedes <1.5 Expected Goals Against (xGA) per match. Do not recommend goalkeepers facing heavy bombardment without a solid xGA baseline.
-- Bench Fodder Exemption: Players priced at £4.0m or £4.5m who are strictly assigned to Bench Slots 3 and 4 are exempt from minimum DefCon or Goalkeeper xGA baseline thresholds. Do not discard viable bench fodder solely for failing starter metric requirements.
+- DefCon Thresholds: Target baseline assets averaging >8.5 CBIT (Clearances, Blocks, Interceptions, Tackles) for defenders, and >10.5 CBIRT (+ Recoveries) for midfielders/forwards.
+- BPS Adjustments: Centre-backs earn 1 BPS per 3 CBI actions. Dribblers face no -1 penalty for being tackled. Penalty goals are a flat 12 BPS for all positions.
+- Goalkeeper Save/Variance Balance: Target goalkeepers only if their team concedes <1.5 Expected Goals Against (xGA) per match.
+- Bench Fodder Exemption: Players priced £4.0m-£4.5m in Bench Slots 3-4 are exempt from starter metric thresholds.
 
 3. SPATIAL GEOMETRY & FLANK MISMATCHES
-- Do not evaluate overall team defense vs overall team attack. You must cross-reference an attacker's primary pitch zone with the opposition's specific spatial weaknesses.
-- Evaluate: Opposition Passes Allowed into Penalty Area, Box Touches Conceded, and Expected Crosses Conceded (xA_cross) broken down strictly by Left Flank, Right Flank, and Centre.
+- Cross-reference an attacker's primary pitch zone with the opposition's specific spatial weaknesses (Passes Allowed into Penalty Area, Box Touches Conceded, xA_cross by flank).
 
 4. CHIP STRUCTURE & 5-TRANSFER ECONOMICS
-- 5-Transfer Banking: Evaluate 0-transfer rolls not just as a "hold", but as an appreciating asset building toward a 3-to-5 transfer "mini-wildcard" that avoids point hits. 
-- Point Hit Execution Constraint: You are forbidden from recommending a point hit (-4) unless the 4-Gameweek Expected Value (EV) of the incoming player exceeds the outgoing player by >5.5 points, OR if a -4 is mathematically required to field 11 starting players due to sudden suspensions/injuries.
-- 8-Chip Macro Strategy: You must actively monitor and flag the deployment of the first set of chips (Wildcard, Free Hit, Triple Captain, Bench Boost) to ensure they are utilized optimally before the Gameweek 19 deadline lock.
+- 5-Transfer Banking: Evaluate 0-transfer rolls as an appreciating asset building toward a 3-to-5 transfer "mini-wildcard".
+- Point Hit Constraint: Forbidden from recommending a point hit (-4) unless the 4-Gameweek Expected Value (EV) of the incoming player exceeds the outgoing player by >5.5 points, OR if required to field 11 starters.
+- 8-Chip Macro Strategy: Monitor deployment of Wildcard, Free Hit, Triple Captain, Bench Boost prior to the Gameweek 19 deadline lock.
 
 5. QUALITATIVE OVERRIDES & TIER-1 LEAK VERIFICATION
-- Expected Minutes (xMins) Overrides: Treat verified Tier-1 ITK/Injury intelligence (e.g., Ben Dinnery, Teamnewsandtix, Paul O'Keefe, Official Press Conferences, Physio Scout) as absolute mathematical overrides to base xMins (reducing them to 0 or 45 depending on the leak).
-- The 15-Minute Panic Rule: If a lineup leak drops within 15 minutes of the Gameweek deadline and alters more than two squad decisions, you must default to the original multi-week EV plan and reject the leak to prevent execution errors.
-- Tactical Hook Rates: Penalize the xMins of assets who possess a high "Sub-65 Minute Substitution Rate" under their current manager.
+- Expected Minutes (xMins) Overrides: Verified Tier-1 ITK/Injury intelligence acts as absolute mathematical overrides to base xMins.
+- 15-Minute Panic Rule: Late leaks affecting >2 decisions within 15 mins of deadline default to the original multi-week EV plan.
 
 6. MATCH STAKES & FATIGUE MULTIPLIERS
-- Cup Congestion Law: Apply a 25% xMins penalty to any outfield starter with <72 hours turnaround from a domestic/European cup match. Simultaneously, apply a 10% boost to the opposition's attacking metrics to account for pressing fatigue in the defending team.
-- Motivation Adjustments: Boost xG projections for direct, counter-attacking forwards facing "Desperation Teams" (relegation/title chasers pushing high defensive lines). Increase overall returns for premium assets facing "Dead Rubber" opponents (mathematically secure teams with dropping PPDA/pressing intensity).
+- Cup Congestion Law: Apply a 25% xMins penalty to starters with <72 hours turnaround from cup matches.
+- Motivation Adjustments: Boost xG for counter-attacking forwards facing high defensive lines.
 
 7. FOREIGN TRANSFERS & ZERO-HISTORY ASSETS
-- Translation Discount: For players arriving from foreign leagues with no Premier League historical baseline data, apply a mandatory 20% discount to their expected attacking output (npxG/xAG) to account for Premier League adaptation and physical intensity.
-- xMins Integration Cap: Cap initial Expected Minutes (xMins) for new foreign arrivals at 45-60 minutes for their first 3 Gameweeks to account for tactical integration, unless Tier-1 sources confirm they are direct, unchallengeable starters.
-- Manual Flagging Constraint: You are forbidden from recommending immediate transfer-in executions for unproven foreign arrivals in GW1-GW3. You MUST isolate them in a dedicated "High-Potential Watchlist / Manual Audit" box within Section 1, highlighting what metrics (e.g., set-piece duties, starter confirmation) need to be verified before buying.
-
-### AUTOMATED LIVE DATA SEARCH PROTOCOL
-Before processing any weekly prompt or evaluating squad metrics, ingest and cross-reference all live fixture state data provided:
-1. FIXTURE & SCHEDULE INGESTION: Read all provided schedule change data (Ben Crellin updates) for current/upcoming gameweeks. Automatically identify any postponed fixtures (Blanks) or rescheduled fixtures (Doubles) and adjust player xMins (0 xMins for Blanks, updated 180-min potential for Doubles).
-2. INJURY & LINEUP INGESTION: Cross-reference the active watchlist against live injury news (Ben Dinnery / Physio Scout updates).
-3. LIVE OVERRIDE EXECUTION: If live news explicitly confirms a player is out injured or suspended, override their FPL API status flag and treat them as 0 xMins, excluding them from immediate transfer consideration.
+- Translation Discount: Apply a 20% discount to expected attacking output (npxG/xAG) for unproven foreign arrivals.
+- xMins Integration Cap: Cap initial xMins for new arrivals at 45-60 mins for their first 3 Gameweeks.
 
 ### OUTPUT FORMAT REQUIREMENTS
-When responding to weekly prompts, structure your analysis strictly into these 5 sections:
-1. Executive Summary & Core Moves (Immediate actions, starting XI decisions, and a dedicated "High-Potential Watchlist / Manual Audit" box for foreign arrivals).
+Structure analysis strictly into these 5 sections:
+1. Executive Summary & Core Moves (Immediate actions, starting XI decisions, and Foreign Arrivals Watchlist box).
 2. Quantitative Trade-off Matrix (Table showing xPts, xMins, EV, and Keeper xGA limits).
 3. Transfer Economics & Chip Status (Banking strategy, EV of rolling vs hitting, GW19 chip countdown).
 4. Spatial, Game-State & Motivation Justification (Flank mismatches and stakes).
 5. ITK & Congestion Audit (Impact of verified Tier-1 leaks, hook rates, and 72-hour cup turnarounds).
 """
 
+# 2. State Persistence Engine
+def load_state():
+    """Loads long-term state memory from fpl_state.json."""
+    if os.path.exists(STATE_FILE_PATH):
+        try:
+            with open(STATE_FILE_PATH, "r") as f:
+                return json.load(f)
+        except Exception as e:
+            print(f"WARNING: Error reading state file: {e}")
+    return {"buyback_targets": {}, "last_updated_gw": 0}
+
+def save_state(state):
+    """Saves updated strategic state memory back to fpl_state.json."""
+    try:
+        with open(STATE_FILE_PATH, "w") as f:
+            json.dump(state, f, indent=4)
+        print("STATE ENGINE: Successfully saved updated strategy state to fpl_state.json")
+    except Exception as e:
+        print(f"ERROR: Failed to save state file: {e}")
+
+# 3. Live Search Data Fetcher
 def get_live_fpl_news():
-    """Executes a free web search to inject live ITK data into the prompt."""
+    """Fetches live ITK intelligence and schedule updates via free search."""
     news_text = "### LIVE ITK NEWS & SCHEDULE DATA (Automatically Fetched)\n"
     try:
         crellin_results = DDGS().text("Ben Crellin FPL blank double gameweek updates", max_results=3)
@@ -99,8 +109,9 @@ def get_live_fpl_news():
         
     return news_text
 
+# 4. Quantitative Expected Value Engine
 def get_base_ev(p):
-    """Calculates a baseline 1-Gameweek Expected Value utilizing API underlying metrics."""
+    """Calculates 1-Gameweek EV combining API endpoints and underlying xGI/xGC metrics."""
     chance = p.get("chance_of_playing_next_round")
     if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
         return -100.0  
@@ -114,7 +125,6 @@ def get_base_ev(p):
             form = float(p.get("form", 0.0))
             ep = (tp / 38.0) + form
 
-        # Moneyball EV Integration: Blending FPL algorithms with pure xGI/xGC underlying data
         if p["pos_id"] in [3, 4]: 
             ep = (ep * 0.7) + (xgi * 2.0)
         elif p["pos_id"] == 2: 
@@ -129,7 +139,7 @@ def get_base_ev(p):
         return 0.0
 
 def get_macro_ev(p, team_avg_fdr):
-    """Calculates a 4-Gameweek EV factoring in algorithmic fixture difficulty."""
+    """Calculates 4-Gameweek EV incorporating schedule difficulty multipliers."""
     base_ev = get_base_ev(p)
     if base_ev <= -100.0:
         return -100.0
@@ -140,9 +150,10 @@ def get_macro_ev(p, team_avg_fdr):
     
     return ev_4gw * fdr_multiplier
 
-def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr):
-    """Unified Single-Step Linear Solver incorporating economic tie-breakers."""
-    prob = pulp.LpProblem("FPL_Unified_Optimization", pulp.LpMaximize)
+# 5. Mixed-Integer Linear Programming (MILP) Solver
+def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation):
+    """Unified Single-Step Linear Solver incorporating Trapped Equity and Liquidity constraints."""
+    prob = pulp.LpProblem("FPL_Moneyball_Unified", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
     squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
@@ -156,7 +167,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         ev = get_macro_ev(p, team_avg_fdr)
         own_tiebreaker = float(p.get("own", 0.0)) * 0.0001
         
-        # Maximize: Starters + Captain Multiplier + Bench Discount + Economic Volatility Protection
+        # Objective: Starters + Captain Double + 10% Bench Discount + Ownership Volatility Protection
         objective.append(
             (ev * starter_vars[i]) + 
             (ev * captain_vars[i]) + 
@@ -166,29 +177,28 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         
     prob += pulp.lpSum(objective) - (4.0 * extra_transfers)
     
+    # Structural Variable Linking
     for i in valid_ids:
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
         
+        # Hard constraint to prevent transferring IN injured assets
         if i not in current_squad_ids:
             p = players_dict[i]
             chance = p.get("chance_of_playing_next_round")
             if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
-                
+
+    # Squad Composition Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
-    prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= total_budget
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
+    prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
+    
+    # Position Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
-    
-    team_ids = set(players_dict[i]["team_id"] for i in valid_ids)
-    for t_id in team_ids:
-        prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
-
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
-    prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
     
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) >= 3
@@ -198,6 +208,16 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
 
+    # Team Limits
+    team_ids = set(players_dict[i]["team_id"] for i in valid_ids)
+    for t_id in team_ids:
+        prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
+
+    # Budget & Liquidity Reserve Constraints
+    effective_budget = total_budget - required_bank_reservation
+    prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= effective_budget
+
+    # Transfer Cost Mathematics
     if free_transfers != "Unlimited":
         try:
             ft = int(str(free_transfers).replace("+", "").strip())
@@ -233,8 +253,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
     vice = None
-    
-    # VC Rotation Hedging: Search for the safest guaranteed 90-minute starter behind the Captain
     for p in starters_sorted_by_ep:
         if not cap or p["id"] != cap["id"]:
             if float(p.get("xgi_90", 0.0)) > 0.0 or p["pos_id"] == 1: 
@@ -245,8 +263,10 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             
     return starters, sorted_bench, cap, vice
 
+# 6. Main Data Pipeline & Strategic Processing
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/6.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/7.0"}
+    state = load_state()
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -263,6 +283,9 @@ def get_fpl_data():
     target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
     
+    state["last_updated_gw"] = target_gw
+
+    # Fetch Fixtures for 4-GW FDR
     try:
         fixtures_resp = requests.get("https://fantasy.premierleague.com/api/fixtures/", headers=headers)
         fixtures_data = fixtures_resp.json()
@@ -272,12 +295,10 @@ def get_fpl_data():
         
     team_fdr_sum = {t: 0 for t in teams.keys()}
     team_fdr_count = {t: 0 for t in teams.keys()}
-    
     for f in fixtures_data:
         event = f.get("event")
         if event and target_gw <= event < target_gw + 4:
-            team_a = f.get("team_a")
-            team_h = f.get("team_h")
+            team_a, team_h = f.get("team_a"), f.get("team_h")
             if team_a in team_fdr_sum:
                 team_fdr_sum[team_a] += f.get("team_a_difficulty", 3)
                 team_fdr_count[team_a] += 1
@@ -285,12 +306,7 @@ def get_fpl_data():
                 team_fdr_sum[team_h] += f.get("team_h_difficulty", 3)
                 team_fdr_count[team_h] += 1
                 
-    team_avg_fdr = {}
-    for t in teams.keys():
-        if team_fdr_count[t] > 0:
-            team_avg_fdr[t] = team_fdr_sum[t] / team_fdr_count[t]
-        else:
-            team_avg_fdr[t] = 3.0
+    team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
     players = {}
     for p in bootstrap_data["elements"]:
@@ -310,7 +326,8 @@ def get_fpl_data():
             "own": p.get("selected_by_percent", 0),
             "chance_of_playing_next_round": p.get("chance_of_playing_next_round"),
             "xgi_90": p.get("expected_goal_involvements_per_90", "0.0"),
-            "xgc_90": p.get("expected_goals_conceded_per_90", "0.0")
+            "xgc_90": p.get("expected_goals_conceded_per_90", "0.0"),
+            "cost_change_start": p.get("cost_change_start", 0)
         }
         
     market_list = []
@@ -318,7 +335,6 @@ def get_fpl_data():
     for pos_id in [1, 2, 3, 4]: 
         pos_players = [p for p in available_players if p["pos_id"] == pos_id]
         top_pos = sorted(pos_players, key=lambda x: float(x.get("own", 0)), reverse=True)[:30]
-        
         for p in top_pos:
             news_flag = f" | FLAG: {p['news']}" if p['news'] else ""
             market_list.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned, Status: {p['status']}{news_flag})")
@@ -334,40 +350,118 @@ def get_fpl_data():
             new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: {news_msg}")
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
     
-    team_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
-    bank = 0.0
-    free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
+    # Fetch User Squad & Public Transfer Ledger
+    squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
+    transfers_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/transfers/"
+    
+    current_squad_ids = []
+    transfer_ledger = []
     
     try:
-        hist_resp = requests.get(team_history_url, headers=headers)
-        if hist_resp.status_code == 200:
-            h_data = hist_resp.json()
-            if h_data.get("current"):
-                last_gw_data = h_data["current"][-1]
-                bank = last_gw_data.get("bank", 0) / 10.0
-    except Exception as e:
-        print(f"WARNING: Error fetching history: {e}")
-        
-    squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
-    current_squad_ids = []
-    current_squad_value = 0.0
-    try:
-        squad_resp = requests.get(squad_url, headers=headers)
-        if squad_resp.status_code == 200:
-            picks_data = squad_resp.json()
-            for pick in picks_data.get("picks", []):
-                pid = pick["element"]
-                current_squad_ids.append(pid)
-                current_squad_value += players.get(pid, {}).get("cost", 0.0)
+        sq_resp = requests.get(squad_url, headers=headers)
+        if sq_resp.status_code == 200:
+            current_squad_ids = [pick["element"] for pick in sq_resp.json().get("picks", [])]
     except Exception as e:
         print(f"WARNING: Error fetching squad picks: {e}")
 
-    total_budget = (current_squad_value + bank) if current_squad_ids else 100.0
+    try:
+        tr_resp = requests.get(transfers_url, headers=headers)
+        if tr_resp.status_code == 200:
+            transfer_ledger = tr_resp.json()
+    except Exception as e:
+        print(f"WARNING: Error fetching transfer ledger: {e}")
 
-    starters, bench, cap, vice = solve_fpl_knapsack(players, current_squad_ids, total_budget, free_transfers, team_avg_fdr)
+    # Reverse-Engineer Exact Purchase and Selling Prices
+    liquid_squad_value = 0.0
+    for pid in current_squad_ids:
+        p = players[pid]
+        now_cost_raw = int(p["cost"] * 10)
+        
+        purchase_price_raw = None
+        for t in reversed(transfer_ledger):
+            if t["element_in"] == pid:
+                purchase_price_raw = t["element_in_cost"]
+                break
+                
+        if purchase_price_raw is None:
+            purchase_price_raw = now_cost_raw - p["cost_change_start"]
+            
+        profit = now_cost_raw - purchase_price_raw
+        if profit > 0:
+            selling_price_raw = purchase_price_raw + (profit // 2)
+        else:
+            selling_price_raw = now_cost_raw
+            
+        p["purchase_price"] = purchase_price_raw / 10.0
+        p["selling_price"] = selling_price_raw / 10.0
+        liquid_squad_value += p["selling_price"]
+
+    # Fetch Current Bank Balance
+    bank = 0.0
+    free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
+    try:
+        hist_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers)
+        if hist_resp.status_code == 200:
+            h_data = hist_resp.json()
+            if h_data.get("current"):
+                bank = h_data["current"][-1].get("bank", 0) / 10.0
+    except Exception as e:
+        print(f"WARNING: Error fetching history: {e}")
+
+    total_liquid_budget = liquid_squad_value + bank if current_squad_ids else 100.0
+
+    # Evaluate Trapped Equity & Active Buyback Plans
+    required_bank_reservation = 0.0
+    active_targets = state.get("buyback_targets", {})
+    updated_targets = {}
+
+    for pid_str, target_info in active_targets.items():
+        if target_gw <= target_info["return_gw"]:
+            updated_targets[pid_str] = target_info
+            if int(pid_str) not in current_squad_ids:
+                required_bank_reservation += target_info["reserved_bank"]
+        else:
+            print(f"STATE ENGINE: Buyback timeline for {target_info['name']} reached in GW{target_gw}. Executing re-entry check.")
+
+    # Check for NEW long-term premium injuries in current squad
+    for pid in current_squad_ids:
+        p = players[pid]
+        chance = p.get("chance_of_playing_next_round")
+        if chance in [0, "0", 0.0, 25, "25", 50, "50"] and p["cost"] >= 9.0:
+            trapped_equity = p["cost"] - p["selling_price"]
+            injury_weeks = 4  # Default estimation for red/orange flags
+            remaining_season_gws = max(1, 38 - target_gw)
+            
+            # Moneyball Crossover Evaluation
+            short_term_replacement_gain = injury_weeks * 4.0  # +4.0 xP/wk avg replacement boost
+            long_term_equity_loss = trapped_equity * 0.25 * remaining_season_gws
+            crossover_ev = short_term_replacement_gain - long_term_equity_loss
+
+            if crossover_ev > 0:
+                print(f"MONEYBALL ENGINE: Selling injured premium {p['name']}. Net Crossover EV: +{crossover_ev:.1f} xP.")
+                target_buyback_price = p["cost"]
+                buyback_reserve = max(0.0, target_buyback_price - 7.5) # Reserve delta vs £7.5m mid replacement
+                
+                updated_targets[str(pid)] = {
+                    "name": p["name"],
+                    "sell_gw": target_gw,
+                    "return_gw": target_gw + injury_weeks,
+                    "selling_price": p["selling_price"],
+                    "target_buyback_price": target_buyback_price,
+                    "reserved_bank": buyback_reserve
+                }
+                required_bank_reservation += buyback_reserve
+
+    state["buyback_targets"] = updated_targets
+    save_state(state)
+
+    # Solve MILP Optimization
+    starters, bench, cap, vice = solve_fpl_knapsack(
+        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation
+    )
     optimal_squad = starters + bench
     
-    locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Total Value: £{total_budget}m) ---\n"
+    locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Liquid Value: £{total_liquid_budget:.1f}m | Reserved Bank: £{required_bank_reservation:.1f}m) ---\n"
     
     if current_squad_ids:
         optimal_ids = [p["id"] for p in optimal_squad]
@@ -394,14 +488,14 @@ def get_fpl_data():
 def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
     gw1_override = ""
     if target_gw == 1 or "Unlimited" in str(free_transfers):
-        gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore all point-hit penalty constraints (Law 4)."
+        gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore point-hit constraints (Law 4)."
 
     action_type = "Full Weekly Execution & Analytical Breakdown"
     
-    focus_instructions = """1. 11-Man Verification Lock: You MUST output the exact mathematically locked Starting XI and Bench provided below. Do NOT change a single player, captain, or bench order. The linear programming solver has already optimized the budget knapsack.
-    2. Analytical Justification: Provide the quantitative trade-off matrix and explain the geometric mismatches (Law 3) that validate this mathematical selection.
-    3. Transfer Economics & Chip Status: Outline banking EV, market volatility, and macro chip alignment based on the executed transfers provided.
-    4. MANDATORY SIGN-OFF: You must conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block mirroring the exact locked structure provided."""
+    focus_instructions = """1. 11-Man Verification Lock: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.
+    2. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
+    3. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
+    4. MANDATORY SIGN-OFF: Conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block mirroring the exact locked structure provided."""
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
@@ -421,10 +515,10 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     {live_news}
     
     ### MANDATORY ANALYTICAL CONSTRAINTS
-    1. Base all transfer and squad analysis STRICTLY on the Mathematically Locked Squad provided. Read any appended injury FLAGs carefully.
+    1. Base all transfer and squad analysis STRICTLY on the Mathematically Locked Squad provided.
     2. Do NOT hallucinate players who are not currently active in the Premier League.
-    3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided. Drop any players from consideration if their FLAG indicates a serious injury.
-    4. LIVE NEWS OVERRIDE: You must meticulously cross-reference the Market Watchlist against the LIVE ITK NEWS and LONG TERM INJURIES sections.
+    3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided.
+    4. LIVE NEWS OVERRIDE: Cross-reference the Market Watchlist against LIVE ITK NEWS and LONG TERM INJURIES.
     5. FOREIGN TRANSFERS: Apply Law 7 to any players listed under NEW ARRIVALS. Highlight them for manual monitoring in Section 1.{gw1_override}
     
     ### DATA INSTRUCTIONS FOR EVALUATION
