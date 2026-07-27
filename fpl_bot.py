@@ -342,26 +342,66 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
     
+    # --- PHASE 2: MICRO-OPTIMIZATION (SINGLE GW) ---
+    squad_players = []
+    for i in valid_ids:
+        if squad_vars[i].varValue and squad_vars[i].varValue > 0.5:
+            squad_players.append(players_dict[i])
+            
+    # Sub-solver to pick optimal starting XI strictly on 1-GW EV
+    sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
+    s_vars = pulp.LpVariable.dicts("s", [p["id"] for p in squad_players], cat="Binary")
+    c_vars = pulp.LpVariable.dicts("c", [p["id"] for p in squad_players], cat="Binary")
+    
+    sub_objective = []
+    for p in squad_players:
+        ev_1gw = get_base_ev(p, weights) # 1-GW EV engine
+        try: ownership = float(p.get("own", 0.0))
+        except: ownership = 0.0
+        eo_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
+        
+        # Maximize 1-GW Starter EV + 1-GW Captaincy EV
+        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw + eo_shield) * c_vars[p["id"]]) )
+        
+    sub_prob += pulp.lpSum(sub_objective)
+    
+    # Standard Gameweek Constraints
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players]) == 11
+    sub_prob += pulp.lpSum([c_vars[p["id"]] for p in squad_players]) == 1
+    
+    for p in squad_players:
+        sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
+        if estimate_xmins(p) < 60:
+            sub_prob += s_vars[p["id"]] == 0
+            
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) >= 3
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) >= 2
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 4]) >= 1
+    
+    sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    
     starters, bench = [], []
     cap = None
     
-    for i in valid_ids:
-        if squad_vars[i].varValue and squad_vars[i].varValue > 0.5:
-            p = players_dict[i]
-            if starter_vars[i].varValue and starter_vars[i].varValue > 0.5:
-                starters.append(p)
-                if captain_vars[i].varValue and captain_vars[i].varValue > 0.5:
-                    cap = p
-            else:
-                bench.append(p)
-                
+    for p in squad_players:
+        if s_vars[p["id"]].varValue and s_vars[p["id"]].varValue > 0.5:
+            starters.append(p)
+            if c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5:
+                cap = p
+        else:
+            bench.append(p)
+            
     starters.sort(key=lambda x: x["pos_id"])
+    
+    # Bench Sorting Logic (Strictly 1-GW EV descending)
     bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_macro_ev(x, team_avg_fdr, weights), reverse=True)
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_base_ev(x, weights), reverse=True)
     sorted_bench = bench_gk + bench_outfield
     
-    starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr, weights), reverse=True)
-    vice = next((p for p in starters_sorted_by_ep if not cap or p["id"] != cap["id"]), starters_sorted_by_ep[0])
+    # Vice-Captain Logic
+    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_base_ev(x, weights), reverse=True)
+    vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
             
     return starters, sorted_bench, cap, vice
 
