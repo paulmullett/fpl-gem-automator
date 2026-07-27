@@ -64,7 +64,8 @@ Structure analysis strictly into these 5 sections:
 3. Transfer Economics & Chip Status (Banking strategy, EV of rolling vs hitting, GW19 chip countdown).
 4. Spatial, Game-State & Motivation Justification.
 5. ITK & Congestion Audit.
-"""
+
+CRITICAL FORMATTING RULE: You must strictly avoid using LaTeX formatting (such as $, $$, or \text{}) for any mathematical formulas, equations, or thresholds. Use standard plain text and Markdown only (e.g., write "EV IN - EV OUT > 5.5 pts" instead of "$EV{\text{IN}} - EV{\text{OUT}} > 5.5\text{ pts}$", and write ">85 mins" instead of "$>85\text{ mins}$").
 
 # 2. State Persistence & Calibration Engine
 def load_state():
