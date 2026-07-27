@@ -185,21 +185,28 @@ def get_live_fpl_news():
     return news_text
 
 # 4. Calibrated Expected Value Engine
+
 def get_base_ev(p, weights):
-    """Calculates 1-Gameweek EV combining API endpoints and underlying xGI/xGC metrics."""
     chance = p.get("chance_of_playing_next_round")
     if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
         return -100.0  
+        
     try:
         ep = float(p.get("ep_next", 0.0))
         xgi = float(p.get("xgi_90", 0.0))
         xgc = float(p.get("xgc_90", 0.0))
+        ownership = float(p.get("own", 0.0))
         xgi_mult = weights.get("xgi_weight", 0.70)
         
         if ep <= 0.0:
             tp = float(p.get("total_points", 0.0))
             form = float(p.get("form", 0.0))
             ep = (tp / 38.0) + form
+
+        # GUARDRAIL: Penalize anomalies. If ownership is under 1.0% and they are not a premium, 
+        # heavily cap their xGI influence to prevent small-sample "Per 90" glitches.
+        if ownership < 1.0 and p["cost"] < 6.0:
+            xgi = xgi * 0.2 
 
         if p["pos_id"] in [3, 4]: 
             ep = (ep * (1.0 - (xgi_mult / 2.0))) + (xgi * (xgi_mult * 2.8))
