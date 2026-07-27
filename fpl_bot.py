@@ -4,7 +4,7 @@ import requests
 import datetime
 from google import genai
 from google.genai import types
-from duckduckgo_search import DDGS
+from ddgs import DDGS
 
 # 1. Load Environment Variables
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -19,7 +19,6 @@ if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
-# PASTE YOUR FULL V5 MASTER SYSTEM INSTRUCTION HERE
 SYSTEM_INSTRUCTION = """
 You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst and Tactical Decision Engine. Your purpose is to evaluate squad selections, transfers, captaincy choices, and chip strategies using advanced underlying metrics, pitch geometry, game-state data, and FPL market economics. You must strictly adhere to the following analytical laws.
 
@@ -99,9 +98,8 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/1.8"}
+    headers = {"User-Agent": "FPL-Auto-Script/2.0"}
     
-    # 1. Fetch bootstrap static to build current player database
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
         bootstrap_data = bootstrap_resp.json()
@@ -112,7 +110,6 @@ def get_fpl_data():
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
     
-    # Map all active players
     players = {}
     for p in bootstrap_data["elements"]:
         players[p["id"]] = {
@@ -146,11 +143,9 @@ def get_fpl_data():
     market_str = "\n".join(market_list)
 
     # 2. Build "New Arrivals / Foreign Signings" Watchlist
-    # Scans for players added with 0 minutes/points, or news strings indicating recent transfer
     new_arrivals = []
     for p in bootstrap_data["elements"]:
-        news_text = p.get("news", "").lower()
-        # Detect recent transfer keywords in FPL news string or zero-minute high-value additions
+        news_text = p.get("news", "").lower() if p.get("news") else ""
         is_new_transfer = "joined" in news_text or "transferred" in news_text or "signed" in news_text
         is_high_value_zero_min = (p["now_cost"] >= 60) and (p.get("minutes", 0) == 0)
         
@@ -164,14 +159,13 @@ def get_fpl_data():
             new_arrivals.append(f"- {name} ({team}, {pos}, £{cost}m, {own}% owned) | NOTE: {news}")
 
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
-        
+
     current_gw = next((e for e in bootstrap_data["events"] if e.get("is_current")), None)
     next_gw = next((e for e in bootstrap_data["events"] if e.get("is_next")), None)
     
     target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
     
-    # 3. Fetch user history for bank balance
     team_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
     bank = "0.0"
     free_transfers = "1+"
@@ -186,7 +180,6 @@ def get_fpl_data():
     except Exception as e:
         print(f"WARNING: Error fetching history: {e}")
         
-    # 4. Fetch user's actual 15-player squad
     squad_list = []
     squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
     try:
@@ -198,7 +191,6 @@ def get_fpl_data():
                 role = "Starter" if pick["position"] <= 11 else "Bench"
                 cap = " (C)" if pick.get("is_captain") else (" (VC)" if pick.get("is_vice_captain") else "")
                 
-                # Fetch news for squad members too so AI can assess current injuries
                 s_news = p_info.get("news", "")
                 s_news_flag = f" | FLAG: {s_news}" if s_news else ""
                 squad_list.append(f"- {p_info.get('name', 'Unknown')} ({p_info.get('team')}, {p_info.get('pos')}, £{p_info.get('cost')}m) - {role}{cap}{s_news_flag}")
@@ -207,8 +199,8 @@ def get_fpl_data():
 
     squad_str = "\n".join(squad_list) if squad_list else "Squad picks not yet public/locked for this gameweek."
     
-    return target_gw, bank, free_transfers, squad_str, market_str
-    
+    return target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str
+
 def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str, live_news):
     day_of_week = datetime.datetime.today().weekday()
     
@@ -267,11 +259,11 @@ def send_to_discord(webhook_url, text):
         requests.post(webhook_url, json={"content": current_chunk})
 
 def main():
-    target_gw, bank, free_transfers, squad_str, market_str = get_fpl_data()
+    target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str = get_fpl_data()
     print("--- FETCHING LIVE WEB SEARCH DATA ---")
     live_news = get_live_fpl_news()
     
-    prompt = build_prompt(target_gw, bank, free_transfers, squad_str, market_str, live_news)
+    prompt = build_prompt(target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str, live_news)
     
     print("--- DATA FETCHED ---")
     print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers}")
