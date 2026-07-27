@@ -250,16 +250,26 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     for i in valid_ids:
         p = players_dict[i]
         ev = get_macro_ev(p, team_avg_fdr, weights)
-        own_tiebreaker = float(p.get("own", 0.0)) * 0.0001
+        ownership = float(p.get("own", 0.0))
         
-        # Premium Captaincy Bias: Add a scalar based on player cost to ensure 
-        # heavy hitters are prioritized for the armband over cheap differentials.
-        premium_bias = (players_dict[i]["cost"] * 0.05)
+        # 1. Effective Ownership (EO) Risk-Shielding Term
+        # Converts ownership percentage (0-100%) into an EO risk-protection scalar (up to +1.5 xP boost).
+        eo_risk_shield = (ownership / 100.0) * 1.5
         
-        # Objective: Starters + Captain Double + Calibrated Bench Discount + Ownership Volatility Protection        
+        # 2. Premium Price Tier Bias
+        # Ensures £10.0m+ assets carry structural priority over budget differentials.
+        premium_bias = (p["cost"] * 0.05)
+        
+        # 3. Squad Tiebreaker
+        own_tiebreaker = ownership * 0.0001
+        
+        # Objective Function Term:
+        # - Starter gets base EV
+        # - Captain gets additional EV + EO Risk Shield + Premium Price Bias
+        # - Bench gets calibrated bench discount
         objective.append(
             (ev * starter_vars[i]) + 
-            ((ev + premium_bias) * captain_vars[i]) + 
+            ((ev + eo_risk_shield + premium_bias) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
