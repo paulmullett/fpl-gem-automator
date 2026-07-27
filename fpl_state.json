@@ -1,0 +1,15 @@
+{
+    "buyback_targets": {},
+    "last_updated_gw": 1,
+    "calibration_weights": {
+        "xgi_weight": 0.7,
+        "fdr_impact_factor": 0.1,
+        "bench_discount": 0.1
+    },
+    "pending_evaluation": {
+        "gw": 1,
+        "projected_xP": 51.94,
+        "captain": "Dasilva"
+    },
+    "performance_history": []
+}
