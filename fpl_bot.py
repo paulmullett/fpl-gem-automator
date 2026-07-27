@@ -158,62 +158,57 @@ def get_live_fpl_news():
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
 
-# 4. Predictive Engine: Expected Minutes & Risk-Adjusted EV
+# 4. Portfolio Risk-Adjusted Predictive Engine
 def estimate_xmins(p):
-    """Calculates realistic xMins with aggressive, safe float casting to prevent data contagion."""
+    """Calculates realistic xMins with robust float casting."""
     chance = str(p.get("chance_of_playing_next_round", ""))
     if chance == "0":
         return 0
     if p.get("status") not in ["a", "d"]:
         return 0
     
-    try:
-        own = float(p.get("own", 0.0))
-    except (ValueError, TypeError):
-        own = 0.0
+    try: own = float(p.get("own", 0.0))
+    except: own = 0.0
         
-    try:
-        cost = float(p.get("cost", 0.0))
-    except (ValueError, TypeError):
-        cost = 0.0
+    try: cost = float(p.get("cost", 0.0))
+    except: cost = 0.0
     
-    # Premium assets (\u00a38.0m+)
     if cost >= 8.0:
         return 90 if own >= 5.0 else 75
-        
-    # Mid-priced players (\u00a36.0m - \u00a37.5m)
     if cost >= 6.0:
         if own >= 5.0: return 85
         elif own >= 1.5: return 65
         else: return 30
-        
-    # Budget assets (\u00a34.0m - \u00a35.5m) - CRITICAL FIX FOR BACKUPS
-    if own >= 5.0:
-        return 85
-    elif own >= 1.5:
-        return 65
-    else:
-        # < 1.5% ownership for a budget player means they are a definitive BACKUP
-        return 0
+    
+    if own >= 5.0: return 85
+    elif own >= 1.5: return 65
+    else: return 0
+
+def get_variance_penalty(p):
+    """Applies a Variance Hazard Penalty to rotation-risk or mid-tier assets."""
+    xmins = estimate_xmins(p)
+    cost = float(p.get("cost", 0.0))
+    
+    # Iron-clad premiums (>£10m, nailed 90 mins) carry zero variance penalty
+    if cost >= 10.0 and xmins >= 85:
+        return 1.0
+    # Assets with rotation risk or sub-80 mins face a 15% variance hazard discount
+    if xmins < 80:
+        return 0.85
+    return 0.95
 
 def get_base_ev(p, weights):
-    """Calculates Base Expected Points, strictly scaled by dynamic minutes."""
+    """Calculates Base Expected Points, scaled by dynamic minutes."""
     xmins = estimate_xmins(p)
     if xmins < 15:
         return 0.0
         
-    try:
-        ep = float(p.get("ep_next", 0.0))
-    except (ValueError, TypeError):
-        ep = 0.0
-    try:
-        xgi = float(p.get("xgi_90", 0.0))
-    except (ValueError, TypeError):
-        xgi = 0.0
-    try:
-        xgc = float(p.get("xgc_90", 0.0))
-    except (ValueError, TypeError):
-        xgc = 0.0
+    try: ep = float(p.get("ep_next", 0.0))
+    except: ep = 0.0
+    try: xgi = float(p.get("xgi_90", 0.0))
+    except: xgi = 0.0
+    try: xgc = float(p.get("xgc_90", 0.0))
+    except: xgc = 0.0
 
     xgi_mult = weights.get("xgi_weight", 0.70)
     
@@ -243,17 +238,19 @@ def get_macro_ev(p, team_avg_fdr, weights):
     if base_ev <= 0.0:
         return 0.0
     
-    ev_4gw = base_ev * 4.0
+    variance_penalty = get_variance_penalty(p)
+    ev_4gw = (base_ev * variance_penalty) * 4.0
+    
     avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
     fdr_impact = weights.get("fdr_impact_factor", 0.10)
     fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
     
     return ev_4gw * fdr_multiplier
 
-# 5. Execution Engine: MILP Solver
+# 5. Execution Engine: Portfolio Optimization MILP Solver
 def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights):
-    """Pure mathematical linear solver with strict constraints and true 2x captain multiplier."""
-    prob = pulp.LpProblem("FPL_Moneyball_Unified", pulp.LpMaximize)
+    """Linear solver optimized with Asymmetric EO Tail-Risk Defense and True 2x Captaincy Multiplexing."""
+    prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     bench_discount = weights.get("bench_discount", 0.05)
     
@@ -267,19 +264,17 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         p = players_dict[i]
         ev = get_macro_ev(p, team_avg_fdr, weights)
         
-        try:
-            ownership = float(p.get("own", 0.0))
-        except:
-            ownership = 0.0
+        try: ownership = float(p.get("own", 0.0))
+        except: ownership = 0.0
         
-        # Effective Ownership Risk Shield
-        eo_risk_shield = (ownership / 100.0) * 1.5
+        # Asymmetric EO Tail-Risk Defense: High-ownership anchors (>40%) get institutional field-defense weight
+        eo_defensive_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
         own_tiebreaker = ownership * 0.0001
         
-        # Objective: Starter Base EV (1x) + Captain additional EV (acts as 2x total multiplier + EO shield)
+        # Objective: Starter Base EV + Captain Additional EV (acting as 2x total multiplier + EO defensive shield)
         objective.append(
             (ev * starter_vars[i]) + 
-            ((ev + eo_risk_shield) * captain_vars[i]) + 
+            ((ev + eo_defensive_shield) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
@@ -289,7 +284,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     for i in valid_ids:
         p = players_dict[i]
         
-        # Core structural hierarchy
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
         
@@ -298,7 +292,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             if chance == "0" or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
                 
-        # RULE 2: Binary xMins Starter Floor. Eradicates backups from Starting XI.
+        # Binary xMins Starter Floor: Strict block on backups (<60 mins) in Starting XI
         if estimate_xmins(p) < 60:
             prob += starter_vars[i] == 0
 
@@ -332,10 +326,8 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
     # Transfer Cost 
     if free_transfers != "Unlimited":
-        try:
-            ft = int(str(free_transfers).replace("+", "").strip())
-        except:
-            ft = 1
+        try: ft = int(str(free_transfers).replace("+", "").strip())
+        except: ft = 1
         if current_squad_ids and len(current_squad_ids) == 15:
             overlap = [i for i in current_squad_ids if i in valid_ids]
             players_kept = pulp.lpSum([squad_vars[i] for i in overlap])
@@ -369,7 +361,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
 # 6. Main Data Pipeline & Integration
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/10.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/11.0"}
     state = load_state()
     
     try:
@@ -431,11 +423,9 @@ def get_fpl_data():
     available_players = [p for p in players.values() if p.get("status") in ["a", "d"]]
     for pos_id in [1, 2, 3, 4]: 
         pos_players = [p for p in available_players if p["pos_id"] == pos_id]
-        
         def safe_float_own(player):
             try: return float(player.get("own", 0.0))
             except: return 0.0
-            
         top_pos = sorted(pos_players, key=safe_float_own, reverse=True)[:30]
         for p in top_pos:
             news_flag = f" | FLAG: {p['news']}" if p['news'] else ""
