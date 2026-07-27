@@ -98,7 +98,7 @@ def get_live_fpl_news():
     return news_text
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/2.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/2.2"}
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -168,7 +168,9 @@ def get_fpl_data():
     
     team_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/"
     bank = "0.0"
-    free_transfers = "1+"
+    
+    # 3. Dynamic Transfer Limit
+    free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
     
     try:
         hist_resp = requests.get(team_history_url, headers=headers)
@@ -204,12 +206,16 @@ def get_fpl_data():
 def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, new_arrivals_str, live_news):
     day_of_week = datetime.datetime.today().weekday()
     
+    gw1_override = ""
+    if target_gw == 1 or "Unlimited" in str(free_transfers):
+        gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore all point-hit penalty constraints (Law 4). Evaluate and suggest the absolute mathematically optimal 15-player squad setup without any transfer cost restrictions."
+
     if WORKFLOW_INPUT == "monday" or (WORKFLOW_INPUT == "auto" and day_of_week <= 2):
         action_type = "Monday Market Assessment & FPL Optimization Protocol"
         focus_instructions = "1. Price Volatility Check\n2. Transfer Banking EV\n3. Macro Chip Alignment"
     else:
         action_type = "Friday Execution Protocol"
-        focus_instructions = "1. Finalize Starting XI and Bench Order\n2. Calculate Captain and Vice-Captain EV\n3. Recalculate all xMins based strictly on the provided Live ITK News."
+        focus_instructions = "1. Finalize Starting XI and Bench Order\n2. Calculate Captain and Vice-Captain EV\n3. Recalculate all xMins based strictly on the provided Live ITK News.\n4. MANDATORY SIGN-OFF: You must conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block. This must clearly list the 11 Starters (with formation), the Captain (C), the Vice-Captain (VC), the exact Bench order (1 to 4), and any Active Chips."
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
@@ -235,7 +241,7 @@ def build_prompt(target_gw, bank, free_transfers, squad_str, market_str, new_arr
     2. Do NOT hallucinate players who are not currently active in the Premier League.
     3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided. Drop any players from consideration if their FLAG indicates a serious injury.
     4. LIVE NEWS OVERRIDE: You must meticulously cross-reference the Market Watchlist against the LIVE ITK NEWS and LONG TERM INJURIES sections. If the live news states a player is injured, you MUST treat them as having 0 xMins and ban them from transfer consideration, even if the official FPL Watchlist lists them as fit.
-    5. FOREIGN TRANSFERS: Apply Law 7 to any players listed under NEW ARRIVALS. Do NOT project them as automatic immediate buys; highlight them for manual monitoring in Section 1.
+    5. FOREIGN TRANSFERS: Apply Law 7 to any players listed under NEW ARRIVALS. Do NOT project them as automatic immediate buys; highlight them for manual monitoring in Section 1.{gw1_override}
     
     ### DATA INSTRUCTIONS FOR EVALUATION
     {focus_instructions}
