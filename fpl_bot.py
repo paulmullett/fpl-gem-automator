@@ -158,7 +158,7 @@ def get_live_fpl_news():
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
 
-# 4. Portfolio Risk-Adjusted Predictive Engine
+# 4. Portfolio Risk-Adjusted Predictive Engine with Mitigation Flags
 def estimate_xmins(p):
     """Calculates realistic xMins with robust float casting."""
     chance = str(p.get("chance_of_playing_next_round", ""))
@@ -189,10 +189,8 @@ def get_variance_penalty(p):
     xmins = estimate_xmins(p)
     cost = float(p.get("cost", 0.0))
     
-    # Iron-clad premiums (>£10m, nailed 90 mins) carry zero variance penalty
     if cost >= 10.0 and xmins >= 85:
         return 1.0
-    # Assets with rotation risk or sub-80 mins face a 15% variance hazard discount
     if xmins < 80:
         return 0.85
     return 0.95
@@ -247,6 +245,23 @@ def get_macro_ev(p, team_avg_fdr, weights):
     
     return ev_4gw * fdr_multiplier
 
+def check_european_congestion_flags(starters, fixtures_data, target_gw):
+    """Generates an advisory flag option if any starter faces heavy mid-week European congestion (<72h turnaround)."""
+    flags = []
+    # Simplified detection for European-participating clubs handling mid-week fixtures
+    uefa_teams = {"MCI", "ARS", "LIV", "AVL", "MUN", "NEW", "CHE", "TOT", "SUN"}
+    for p in starters:
+        if p["team"] in uefa_teams:
+            flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion. Consider bench contingency or rotation guard.]")
+    return flags
+
+def evaluate_dynamic_opportunity_cost(free_transfers, starters):
+    """Dynamic Opportunity Cost Index check to provide a flexible mini-wildcard trigger flag option."""
+    flags = []
+    if str(free_transfers).isdigit() and int(free_transfers) >= 3:
+        flags.append("[FLAG OPTION: Mini-Wildcard Trigger Recommended — Transfer hoarding threshold reached (3+ FTs banked). Evaluate breaking transfer lock to capture imminent price/fixture swings rather than risking cap loss.]")
+    return flags
+
 # 5. Execution Engine: Portfolio Optimization MILP Solver
 def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights):
     """Linear solver optimized with Asymmetric EO Tail-Risk Defense and True 2x Captaincy Multiplexing."""
@@ -267,11 +282,9 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
         
-        # Asymmetric EO Tail-Risk Defense: High-ownership anchors (>40%) get institutional field-defense weight
         eo_defensive_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
         own_tiebreaker = ownership * 0.0001
         
-        # Objective: Starter Base EV + Captain Additional EV (acting as 2x total multiplier + EO defensive shield)
         objective.append(
             (ev * starter_vars[i]) + 
             ((ev + eo_defensive_shield) * captain_vars[i]) + 
@@ -292,16 +305,13 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             if chance == "0" or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
                 
-        # Binary xMins Starter Floor: Strict block on backups (<60 mins) in Starting XI
         if estimate_xmins(p) < 60:
             prob += starter_vars[i] == 0
 
-    # Squad Composition Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
     prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
     
-    # Position Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
@@ -315,16 +325,13 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
 
-    # Team Limits
     team_ids = set(players_dict[i]["team_id"] for i in valid_ids)
     for t_id in team_ids:
         prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
-    # Financial Constraints
     effective_budget = total_budget - required_bank_reservation
     prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= effective_budget
 
-    # Transfer Cost 
     if free_transfers != "Unlimited":
         try: ft = int(str(free_transfers).replace("+", "").strip())
         except: ft = 1
@@ -361,7 +368,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
 # 6. Main Data Pipeline & Integration
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/11.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/12.0"}
     state = load_state()
     
     try:
@@ -535,6 +542,11 @@ def get_fpl_data():
     )
     optimal_squad = starters + bench
 
+    # Generate Mitigation Flags for prompt ingestion
+    european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
+    opportunity_flags = evaluate_dynamic_opportunity_cost(free_transfers, starters)
+    mitigation_flags_str = "\n".join(european_flags + opportunity_flags) if (european_flags or opportunity_flags) else "[No active mitigation warning flags triggered]"
+
     projected_starting_xP = sum(get_base_ev(p, weights) for p in starters)
     if cap:
         projected_starting_xP += get_base_ev(cap, weights)
@@ -569,6 +581,8 @@ def get_fpl_data():
     for i, p in enumerate(bench):
         locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {estimate_xmins(p)})\n"
     
+    locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
+
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
 
 def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
@@ -599,9 +613,10 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     focus_instructions = f"""1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order. 
     2. Phase-Specific Focus ({action_type}):
 {phase_instructions}
-    3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
-    4. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
-    5. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
+    3. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions rather than enforced automated alterations.
+    4. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
+    5. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
+    6. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
