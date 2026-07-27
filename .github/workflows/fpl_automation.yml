@@ -15,6 +15,9 @@ on:
           - post_gameweek_review
           - pre_gameweek_deadline
 
+permissions:
+  contents: write
+
 jobs:
   run-fpl-bot:
     runs-on: ubuntu-latest
