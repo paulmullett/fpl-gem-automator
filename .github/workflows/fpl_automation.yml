@@ -33,7 +33,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install dependencies
-        run: pip install requests google-genai duckduckgo-search
+        run: pip install requests google-genai ddgs
 
       - name: Execute FPL Bot
         env:
