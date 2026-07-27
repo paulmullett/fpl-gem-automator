@@ -14,7 +14,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 
-# NEW: Master Chip Flag ("NONE", "BENCH_BOOST", "FREE_HIT", "TRIPLE_CAPTAIN", "WILDCARD")
+# Master Chip Flag ("NONE", "BENCH_BOOST", "FREE_HIT", "TRIPLE_CAPTAIN", "WILDCARD")
 ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
 STATE_FILE_PATH = "fpl_state.json"
 
@@ -41,7 +41,7 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 - DefCon Thresholds: Target baseline assets averaging >8.5 CBIT (Clearances, Blocks, Interceptions, Tackles) for defenders, and >10.5 CBIRT (+ Recoveries) for midfielders/forwards.
 - BPS Adjustments: Centre-backs earn 1 BPS per 3 CBI actions. Dribblers face no -1 penalty for being tackled. Penalty goals are a flat 12 BPS for all positions.
 - Goalkeeper Save/Variance Balance: Target goalkeepers only if their team concedes <1.5 Expected Goals Against (xGA) per match.
-- Bench Fodder Exemption: Players priced \u00a34.0m-\u00a34.5m in Bench Slots 3-4 are exempt from starter metric thresholds.
+- Bench Fodder Exemption: Players priced £4.0m-£4.5m in Bench Slots 3-4 are exempt from starter metric thresholds.
 
 3. SPATIAL GEOMETRY & FLANK MISMATCHES
 - Cross-reference an attacker's primary pitch zone with the opposition's specific spatial weaknesses.
@@ -72,7 +72,7 @@ SECTION 1: EXECUTIVE SUMMARY & CORE MOVES
 SECTION 2: QUANTITATIVE TRADE-OFF SUMMARY
 - Do NOT use wide Markdown tables (they break on mobile/Discord).
 - Format strictly as compact, high-density, single-line bullet points per player:
-  • **[Player Name]** ([POS] | [TEAM] | \u00a3[X.X]m) — **[xMins] xMins** | **[EV] EV** | [DefCon / xGA / Metric Status]
+  • **[Player Name]** ([POS] | [TEAM] | £[X.X]m) — **[xMins] xMins** | **[EV] EV** | [DefCon / xGA / Metric Status]
 
 SECTION 3: TRANSFER ECONOMICS & CHIP STATUS
 - Capital management, rolling transfer economics, market volatility, and macro chip timeline.
@@ -90,21 +90,21 @@ MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
 ================================================================================
 FINAL LOCKED-IN SQUAD SUMMARY: GAMEWEEK [X]
 ================================================================================
-Formation: [X-X-X] | Bank: \u00a3[X.X]m | Free Transfers: [X]
+Formation: [X-X-X] | Bank: £[X.X]m | Free Transfers: [X]
 
 STARTING XI:
-  GKP: [Player] (\u00a3[X.X]m)
-  DEF: [Player] (\u00a3[X.X]m)
+  GKP: [Player] (£[X.X]m)
+  DEF: [Player] (£[X.X]m)
   ...
 
 BENCH RESERVES:
-  Slot 1: [Player] (\u00a3[X.X]m, [POS])
-  Slot 2: [Player] (\u00a3[X.X]m, [POS])
-  Slot 3: [Player] (\u00a3[X.X]m, [POS])
-  Slot 4: [Player] (\u00a3[X.X]m, [POS])
+  Slot 1: [Player] (£[X.X]m, [POS])
+  Slot 2: [Player] (£[X.X]m, [POS])
+  Slot 3: [Player] (£[X.X]m, [POS])
+  Slot 4: [Player] (£[X.X]m, [POS])
 ================================================================================
 
-CRITICAL FORMATTING RULE: Strictly AVOID LaTeX syntax (e.g. $, $$, \\text{}, \\times). Use plain text and standard Markdown formatting exclusively.
+CRITICAL FORMATTING RULE: Strictly AVOID LaTeX syntax (e.g. $, $$, \text{}, \times). Use plain text and standard Markdown formatting exclusively.
 """
 
 # 2. State Persistence & Calibration Engine
@@ -251,6 +251,10 @@ def get_base_ev(p, weights, xmins_overrides):
     except: xgi = 0.0
     try: xgc = float(p.get("xgc_90", 0.0))
     except: xgc = 0.0
+
+    # FALLBACK: Prevent missing/zero data from generating 100% Clean Sheet probabilities
+    if xgc <= 0.0:
+        xgc = 1.35  # Standard league average xGA baseline
 
     mins_factor = xmins / 90.0
     
@@ -541,7 +545,7 @@ def get_fpl_data():
         top_pos = sorted(pos_players, key=safe_float_own, reverse=True)[:30]
         for p in top_pos:
             news_flag = f" | FLAG: {p['news']}" if p['news'] else ""
-            market_list.append(f"- {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, {p['own']}% owned, Status: {p['status']}{news_flag})")
+            market_list.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned, Status: {p['status']}{news_flag})")
     market_str = "\n".join(market_list)
 
     new_arrivals = []
@@ -551,7 +555,7 @@ def get_fpl_data():
         is_high_value_zero_min = (p["cost"] >= 6.0) and (p["total_points"] == 0)
         if (is_new_transfer or is_high_value_zero_min) and p["status"] in ["a", "d"]:
             news_msg = p["news"] if p["news"] else "New Transfer / Foreign Arrival"
-            new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, {p['own']}% owned) | NOTE: {news_msg}")
+            new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: {news_msg}")
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
     
     squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
@@ -670,7 +674,7 @@ def get_fpl_data():
 
     save_state(state)
     
-    locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Liquid Value: \u00a3{total_liquid_budget:.1f}m | Reserved Bank: \u00a3{required_bank_reservation:.1f}m) ---\n"
+    locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Liquid Value: £{total_liquid_budget:.1f}m | Reserved Bank: £{required_bank_reservation:.1f}m) ---\n"
     locked_squad_str += f"ACTIVE CHIP STATUS: {ACTIVE_CHIP}\n"
     
     if current_squad_ids:
@@ -689,13 +693,15 @@ def get_fpl_data():
         is_vice = " (VC)" if vice and p["id"] == vice["id"] else ""
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {xmins}){is_cap}{is_vice}\n"
+        actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
+        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins}, TRUE 1-GW EV: {actual_ev}){is_cap}{is_vice}\n"
         
     locked_squad_str += "\nBENCH:\n"
     for i, p in enumerate(bench):
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {xmins})\n"
+        actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
+        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins}, TRUE 1-GW EV: {actual_ev})\n"
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
 
@@ -730,16 +736,17 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
         f"1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.\n"
         f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
         f"3. Visual Aesthetics: Include monospaced ASCII pitch maps in Section 1 and Section 4 using markdown text codeblocks. Format Section 2 strictly as single-line bullet points with bold player names. Avoid wide Markdown tables.\n"
-        f"4. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions.\n"
-        f"5. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.\n"
-        f"6. MANDATORY SIGN-OFF: Conclude your response with the boxed 'FINAL LOCKED-IN SQUAD SUMMARY' ASCII block."
+        f"4. Analytical Justification: Use the EXACT 'TRUE 1-GW EV' numbers provided in the mathematically locked squad list below. Do NOT invent or hallucinate Expected Value (EV) numbers. Format Section 2 strictly as single-line bullet points with bold player names.\n"
+        f"5. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions.\n"
+        f"6. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.\n"
+        f"7. MANDATORY SIGN-OFF: Conclude your response with the boxed 'FINAL LOCKED-IN SQUAD SUMMARY' ASCII block."
     )
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
     
     ### CURRENT SQUAD STATE & ECONOMICS
-    - Current Bank Balance: \u00a3{bank}m | Saved Free Transfers: {free_transfers}
+    - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
     
 {locked_squad_str}
 
