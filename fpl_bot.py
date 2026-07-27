@@ -3,6 +3,7 @@ import sys
 import json
 import requests
 import pulp
+import math
 from google import genai
 from google.genai import types
 from ddgs import DDGS
@@ -12,6 +13,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
+
+# NEW: Master Chip Flag ("NONE", "BENCH_BOOST", "FREE_HIT", "TRIPLE_CAPTAIN", "WILDCARD")
+ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
 STATE_FILE_PATH = "fpl_state.json"
 
 # CONFIGURATION: Update this list at the start of each season
@@ -108,6 +112,8 @@ def load_state():
     default_state = {
         "buyback_targets": {},
         "last_updated_gw": 0,
+        "xmins_overrides": {}, 
+        "price_watchlist": {},
         "calibration_weights": {
             "xgi_weight": 0.70,
             "fdr_impact_factor": 0.10,
@@ -221,18 +227,21 @@ def estimate_xmins(p):
     elif own >= 1.5: return 65
     else: return 0
 
-def get_variance_penalty(p):
-    xmins = estimate_xmins(p)
+def get_variance_penalty(p, xmins):
     cost = float(p.get("cost", 0.0))
-    
     if cost >= 10.0 and xmins >= 85:
         return 1.0
     if xmins < 80:
         return 0.85
     return 0.95
 
-def get_base_ev(p, weights):
-    xmins = estimate_xmins(p)
+def get_base_ev(p, weights, xmins_overrides):
+    pid_str = str(p["id"])
+    if pid_str in xmins_overrides:
+        xmins = float(xmins_overrides[pid_str])
+    else:
+        xmins = estimate_xmins(p)
+        
     if xmins < 15:
         return 0.0
         
@@ -243,35 +252,42 @@ def get_base_ev(p, weights):
     try: xgc = float(p.get("xgc_90", 0.0))
     except: xgc = 0.0
 
-    xgi_mult = weights.get("xgi_weight", 0.70)
-    
-    if ep <= 0.0:
-        try:
-            tp = float(p.get("total_points", 0.0))
-            form = float(p.get("form", 0.0))
-            ep = (tp / 38.0) + form
-        except:
-            ep = 0.0
-
     mins_factor = xmins / 90.0
-
-    if p["pos_id"] in [3, 4]: 
-        base_points = (ep * (1.0 - (xgi_mult / 2.0))) + (xgi * (xgi_mult * 2.8))
-    elif p["pos_id"] == 2: 
-        cs_boost = max(0, 1.5 - xgc)
-        base_points = (ep * 0.7) + cs_boost + (xgi * xgi_mult)
-    elif p["pos_id"] == 1: 
-        cs_boost = max(0, 1.5 - xgc)
-        base_points = (ep * 0.7) + (cs_boost * 1.5)
+    
+    # 1. Poisson Clean Sheet Engine
+    team_xga = xgc * mins_factor
+    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
+    
+    cs_points = 0.0
+    if p["pos_id"] in [1, 2]: 
+        cs_points = cs_prob * 4.0
+    elif p["pos_id"] == 3: 
+        cs_points = cs_prob * 1.0
         
-    return base_points * mins_factor
+    # 2. Attacking Poisson EV
+    attacking_points = (xgi * mins_factor) * 4.5 
+    
+    # 3. Appearance Points
+    app_points = 2.0 if xmins >= 60 else (1.0 if xmins > 0 else 0.0)
+    
+    # Base Raw EV
+    raw_ev = app_points + attacking_points + cs_points
+    
+    # Blend with FPL's internal EP
+    xgi_mult = weights.get("xgi_weight", 0.70)
+    final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
+    
+    return final_ev
 
-def get_macro_ev(p, team_avg_fdr, weights):
-    base_ev = get_base_ev(p, weights)
+def get_macro_ev(p, team_avg_fdr, weights, xmins_overrides):
+    base_ev = get_base_ev(p, weights, xmins_overrides)
     if base_ev <= 0.0:
         return 0.0
     
-    variance_penalty = get_variance_penalty(p)
+    pid_str = str(p["id"])
+    xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+    variance_penalty = get_variance_penalty(p, xmins)
+    
     ev_4gw = (base_ev * variance_penalty) * 4.0
     
     avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
@@ -298,11 +314,19 @@ def evaluate_dynamic_opportunity_cost(free_transfers, starters):
     return flags
 
 # 5. Execution Engine: Portfolio Optimization MILP Solver
-def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights):
+def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, active_chip):
     prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
-    bench_discount = weights.get("bench_discount", 0.05)
     
+    # Chip Adjustments
+    bench_discount = weights.get("bench_discount", 0.05)
+    captain_multiplier = 1.0 
+    
+    if active_chip == "BENCH_BOOST":
+        bench_discount = 1.0
+    elif active_chip == "TRIPLE_CAPTAIN":
+        captain_multiplier = 2.0
+        
     squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
     starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
     captain_vars = pulp.LpVariable.dicts("captain", valid_ids, cat="Binary")
@@ -311,7 +335,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     objective = []
     for i in valid_ids:
         p = players_dict[i]
-        ev = get_macro_ev(p, team_avg_fdr, weights)
+        ev = get_macro_ev(p, team_avg_fdr, weights, xmins_overrides)
         
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
@@ -321,7 +345,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         
         objective.append(
             (ev * starter_vars[i]) + 
-            ((ev + eo_defensive_shield) * captain_vars[i]) + 
+            ((ev * captain_multiplier + eo_defensive_shield) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
@@ -330,6 +354,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     for i in valid_ids:
         p = players_dict[i]
+        pid_str = str(i)
         
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
@@ -339,7 +364,8 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             if chance == "0" or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
                 
-        if estimate_xmins(p) < 60:
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        if xmins < 60:
             prob += starter_vars[i] == 0
 
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
@@ -366,7 +392,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     effective_budget = total_budget - required_bank_reservation
     prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= effective_budget
 
-    if str(free_transfers).lower() != "unlimited":
+    if active_chip not in ["FREE_HIT", "WILDCARD"] and str(free_transfers).lower() != "unlimited":
         try: ft = int(''.join(filter(str.isdigit, str(free_transfers))))
         except: ft = 1
         if current_squad_ids and len(current_squad_ids) == 15:
@@ -383,30 +409,29 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         if squad_vars[i].varValue and squad_vars[i].varValue > 0.5:
             squad_players.append(players_dict[i])
             
-    # Sub-solver to pick optimal starting XI strictly on 1-GW EV
     sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
     s_vars = pulp.LpVariable.dicts("s", [p["id"] for p in squad_players], cat="Binary")
     c_vars = pulp.LpVariable.dicts("c", [p["id"] for p in squad_players], cat="Binary")
     
     sub_objective = []
     for p in squad_players:
-        ev_1gw = get_base_ev(p, weights) # 1-GW EV engine
+        ev_1gw = get_base_ev(p, weights, xmins_overrides) 
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
         eo_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
         
-        # Maximize 1-GW Starter EV + 1-GW Captaincy EV
-        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw + eo_shield) * c_vars[p["id"]]) )
+        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * captain_multiplier + eo_shield) * c_vars[p["id"]]) )
         
     sub_prob += pulp.lpSum(sub_objective)
     
-    # Standard Gameweek Constraints
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players]) == 11
     sub_prob += pulp.lpSum([c_vars[p["id"]] for p in squad_players]) == 1
     
     for p in squad_players:
         sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
-        if estimate_xmins(p) < 60:
+        pid_str = str(p["id"])
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        if xmins < 60:
             sub_prob += s_vars[p["id"]] == 0
             
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
@@ -429,13 +454,11 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             
     starters.sort(key=lambda x: x["pos_id"])
     
-    # Bench Sorting Logic (Strictly 1-GW EV descending)
     bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_base_ev(x, weights), reverse=True)
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_base_ev(x, weights, xmins_overrides), reverse=True)
     sorted_bench = bench_gk + bench_outfield
     
-    # Vice-Captain Logic
-    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_base_ev(x, weights), reverse=True)
+    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_base_ev(x, weights, xmins_overrides), reverse=True)
     vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
             
     return starters, sorted_bench, cap, vice
@@ -444,6 +467,8 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 def get_fpl_data():
     headers = {"User-Agent": "FPL-Auto-Script/13.0"}
     state = load_state()
+    xmins_overrides = state.get("xmins_overrides", {})
+    price_watchlist = state.get("price_watchlist", {})
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -568,6 +593,11 @@ def get_fpl_data():
         p["purchase_price"] = purchase_price_raw / 10.0
         p["selling_price"] = selling_price_raw / 10.0
         liquid_squad_value += p["selling_price"]
+        
+        # Track price volatility in state
+        pid_str = str(pid)
+        if pid_str not in price_watchlist:
+            price_watchlist[pid_str] = p["purchase_price"]
 
     bank = 0.0
     free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
@@ -616,9 +646,10 @@ def get_fpl_data():
                 required_bank_reservation += buyback_reserve
 
     state["buyback_targets"] = updated_targets
+    state["price_watchlist"] = price_watchlist
 
     starters, bench, cap, vice = solve_fpl_knapsack(
-        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights
+        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, ACTIVE_CHIP
     )
     optimal_squad = starters + bench
 
@@ -626,9 +657,10 @@ def get_fpl_data():
     opportunity_flags = evaluate_dynamic_opportunity_cost(free_transfers, starters)
     mitigation_flags_str = "\n".join(european_flags + opportunity_flags) if (european_flags or opportunity_flags) else "[No active mitigation warning flags triggered]"
 
-    projected_starting_xP = sum(get_base_ev(p, weights) for p in starters)
+    projected_starting_xP = sum(get_base_ev(p, weights, xmins_overrides) for p in starters)
     if cap:
-        projected_starting_xP += get_base_ev(cap, weights)
+        cap_mult = 2.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 1.0
+        projected_starting_xP += get_base_ev(cap, weights, xmins_overrides) * cap_mult
         
     state["pending_evaluation"] = {
         "gw": target_gw,
@@ -639,6 +671,7 @@ def get_fpl_data():
     save_state(state)
     
     locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Liquid Value: \u00a3{total_liquid_budget:.1f}m | Reserved Bank: \u00a3{required_bank_reservation:.1f}m) ---\n"
+    locked_squad_str += f"ACTIVE CHIP STATUS: {ACTIVE_CHIP}\n"
     
     if current_squad_ids:
         optimal_ids = [p["id"] for p in optimal_squad]
@@ -654,11 +687,15 @@ def get_fpl_data():
     for p in starters:
         is_cap = " (C)" if cap and p["id"] == cap["id"] else ""
         is_vice = " (VC)" if vice and p["id"] == vice["id"] else ""
-        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {estimate_xmins(p)}){is_cap}{is_vice}\n"
+        pid_str = str(p["id"])
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {xmins}){is_cap}{is_vice}\n"
         
     locked_squad_str += "\nBENCH:\n"
     for i, p in enumerate(bench):
-        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {estimate_xmins(p)})\n"
+        pid_str = str(p["id"])
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, \u00a3{p['cost']}m, Proj. Mins: {xmins})\n"
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
 
@@ -733,7 +770,6 @@ def send_to_discord(webhook_url, text):
     chunks = []
     current_chunk = ""
     for line in text.split("\n"):
-        # Force-split single lines that are obscenely long (e.g. wide markdown tables)
         while len(line) > 1800:
             if len(current_chunk) > 0:
                 chunks.append(current_chunk)
@@ -761,7 +797,7 @@ def main():
     prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news)
     
     print("--- DATA FETCHED ---")
-    print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers}")
+    print(f"Target GW: {target_gw} | Bank: {bank} | Transfers: {free_transfers} | Chip: {ACTIVE_CHIP}")
     print("--- QUERYING GEMINI API ---")
     
     try:
