@@ -8,8 +8,10 @@
     },
     "pending_evaluation": {
         "gw": 1,
-        "projected_xP": 37.31,
+        "projected_xP": 57.0,
         "captain": "Haaland"
     },
-    "performance_history": []
+    "performance_history": [],
+    "xmins_overrides": {},
+    "price_watchlist": {}
 }
