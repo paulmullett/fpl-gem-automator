@@ -252,10 +252,14 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         ev = get_macro_ev(p, team_avg_fdr, weights)
         own_tiebreaker = float(p.get("own", 0.0)) * 0.0001
         
-        # Objective: Starters + Captain Double + Calibrated Bench Discount + Ownership Volatility Protection
+        # Premium Captaincy Bias: Add a scalar based on player cost to ensure 
+        # heavy hitters are prioritized for the armband over cheap differentials.
+        premium_bias = (players_dict[i]["cost"] * 0.05)
+        
+        # Objective: Starters + Captain Double + Calibrated Bench Discount + Ownership Volatility Protection        
         objective.append(
             (ev * starter_vars[i]) + 
-            (ev * captain_vars[i]) + 
+            ((ev + premium_bias) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
@@ -602,7 +606,12 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     - Provide a complete balanced breakdown covering both transfer economics and upcoming fixture geometry.
         """
 
-    focus_instructions = f"""1. 11-Man Verification Lock: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.
+    focus_instructions = f"""1. 11-Man Verification Lock & xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order. HOWEVER, if the solver has locked a player who is a confirmed backup in reality (e.g., a backup GK behind an established #1), you MUST project them for 0 xMins in the Matrix and explicitly flag the solver's error in the Executive Summary.
+    2. Phase-Specific Focus ({action_type}):
+{phase_instructions}
+    3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
+    4. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
+    5. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
     2. Phase-Specific Focus ({action_type}):
 {phase_instructions}
     3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
