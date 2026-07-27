@@ -60,7 +60,7 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 ### OUTPUT FORMAT REQUIREMENTS
 Structure analysis strictly into these 5 sections:
 1. Executive Summary & Core Moves.
-2. Quantitative Trade-off Matrix (Table showing xPts, xMins, EV, and Keeper xGA limits).
+2. Quantitative Trade-off Summary (Compact, mobile-friendly bullet points showing xMins, EV, DefCon/Metrics, and xGA limits instead of wide tables).
 3. Transfer Economics & Chip Status (Banking strategy, EV of rolling vs hitting, GW19 chip countdown).
 4. Spatial, Game-State & Motivation Justification.
 5. ITK & Congestion Audit.
@@ -616,7 +616,7 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     2. Phase-Specific Focus ({action_type}):
 {phase_instructions}
     3. Tactical Mitigation Option Flags: Review any generated TACTICAL MITIGATION OPTION FLAGS and present them clearly as optional human decisions rather than enforced automated alterations.
-    4. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
+    4. Analytical Justification: Provide the Quantitative Trade-off Summary as compact bullet points per player (avoid wide Markdown tables) and explain geometric mismatches (Law 3).
     5. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
     6. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
 
