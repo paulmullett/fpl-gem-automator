@@ -1,30 +1,15 @@
-name: FPL Automated Strategy Engine
+name: FPL Automated Tactical Engine
 
 on:
-  # 1. Automated Schedule (Cron)
   schedule:
-    # Runs at 09:00 UTC every Monday (Market Assessment)
-    - cron: '0 9 * * 1'
-    # Runs at 12:00 UTC every Friday (Deadline Execution)
-    - cron: '0 12 * * 5'
-  
-  # 2. Manual Trigger Button
+    - cron: '0 8 * * 1,5' # Runs Mondays and Fridays at 08:00 UTC
   workflow_dispatch:
-    inputs:
-      prompt_type:
-        description: 'Force Prompt Type (monday or friday)'
-        required: true
-        default: 'friday'
-        type: choice
-        options:
-          - monday
-          - friday
 
 jobs:
-  run-fpl-engine:
+  run-fpl-bot:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
+      - name: Checkout Code
         uses: actions/checkout@v4
 
       - name: Set up Python
@@ -32,13 +17,19 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install Dependencies
         run: pip install requests google-genai ddgs pulp
 
-      - name: Execute FPL Bot
+      - name: Execute FPL Engine
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
-          MANUAL_TRIGGER: ${{ github.event.inputs.prompt_type || 'auto' }}
         run: python fpl_bot.py
+
+      - name: Commit State Persistence File
+        run: |
+          git config --global user.name 'fpl-bot-autocommit'
+          git config --global user.email 'fpl-bot@users.noreply.github.com'
+          git add fpl_state.json
+          git diff --quiet && git diff --staged --quiet || (git commit -m "Auto-update FPL strategic state memory [skip ci]" && git push)
