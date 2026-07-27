@@ -2,7 +2,6 @@ import os
 import sys
 import json
 import requests
-import datetime
 import pulp
 from google import genai
 from google.genai import types
@@ -14,6 +13,9 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 STATE_FILE_PATH = "fpl_state.json"
+
+# CONFIGURATION: Update this list at the start of each season
+UEFA_TEAMS = {"MCI", "ARS", "LIV", "AVL", "MUN", "NEW", "CHE", "TOT", "SUN"}
 
 if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
     print("CRITICAL ERROR: Missing GitHub Secrets (GEMINI_API_KEY, DISCORD_WEBHOOK_URL, or FPL_TEAM_ID).")
@@ -160,7 +162,6 @@ def get_live_fpl_news():
 
 # 4. Portfolio Risk-Adjusted Predictive Engine with Mitigation Flags
 def estimate_xmins(p):
-    """Calculates realistic xMins with robust float casting."""
     chance = str(p.get("chance_of_playing_next_round", ""))
     if chance == "0":
         return 0
@@ -169,7 +170,6 @@ def estimate_xmins(p):
     
     try: own = float(p.get("own", 0.0))
     except: own = 0.0
-        
     try: cost = float(p.get("cost", 0.0))
     except: cost = 0.0
     
@@ -185,7 +185,6 @@ def estimate_xmins(p):
     else: return 0
 
 def get_variance_penalty(p):
-    """Applies a Variance Hazard Penalty to rotation-risk or mid-tier assets."""
     xmins = estimate_xmins(p)
     cost = float(p.get("cost", 0.0))
     
@@ -196,7 +195,6 @@ def get_variance_penalty(p):
     return 0.95
 
 def get_base_ev(p, weights):
-    """Calculates Base Expected Points, scaled by dynamic minutes."""
     xmins = estimate_xmins(p)
     if xmins < 15:
         return 0.0
@@ -246,25 +244,24 @@ def get_macro_ev(p, team_avg_fdr, weights):
     return ev_4gw * fdr_multiplier
 
 def check_european_congestion_flags(starters, fixtures_data, target_gw):
-    """Generates an advisory flag option if any starter faces heavy mid-week European congestion (<72h turnaround)."""
     flags = []
-    # Simplified detection for European-participating clubs handling mid-week fixtures
-    uefa_teams = {"MCI", "ARS", "LIV", "AVL", "MUN", "NEW", "CHE", "TOT", "SUN"}
     for p in starters:
-        if p["team"] in uefa_teams:
+        if p["team"] in UEFA_TEAMS:
             flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion. Consider bench contingency or rotation guard.]")
     return flags
 
 def evaluate_dynamic_opportunity_cost(free_transfers, starters):
-    """Dynamic Opportunity Cost Index check to provide a flexible mini-wildcard trigger flag option."""
     flags = []
-    if str(free_transfers).isdigit() and int(free_transfers) >= 3:
-        flags.append("[FLAG OPTION: Mini-Wildcard Trigger Recommended — Transfer hoarding threshold reached (3+ FTs banked). Evaluate breaking transfer lock to capture imminent price/fixture swings rather than risking cap loss.]")
+    try:
+        ft = int(''.join(filter(str.isdigit, str(free_transfers))))
+        if ft >= 3:
+            flags.append("[FLAG OPTION: Mini-Wildcard Trigger Recommended — Transfer hoarding threshold reached (3+ FTs banked). Evaluate breaking transfer lock to capture imminent price/fixture swings rather than risking cap loss.]")
+    except ValueError:
+        pass
     return flags
 
 # 5. Execution Engine: Portfolio Optimization MILP Solver
 def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights):
-    """Linear solver optimized with Asymmetric EO Tail-Risk Defense and True 2x Captaincy Multiplexing."""
     prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     bench_discount = weights.get("bench_discount", 0.05)
@@ -332,8 +329,8 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     effective_budget = total_budget - required_bank_reservation
     prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= effective_budget
 
-    if free_transfers != "Unlimited":
-        try: ft = int(str(free_transfers).replace("+", "").strip())
+    if str(free_transfers).lower() != "unlimited":
+        try: ft = int(''.join(filter(str.isdigit, str(free_transfers))))
         except: ft = 1
         if current_squad_ids and len(current_squad_ids) == 15:
             overlap = [i for i in current_squad_ids if i in valid_ids]
@@ -368,11 +365,14 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
 # 6. Main Data Pipeline & Integration
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/12.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/13.0"}
     state = load_state()
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
+        if bootstrap_resp.status_code != 200:
+            print(f"CRITICAL ERROR: FPL API returned status {bootstrap_resp.status_code}. The game is likely updating.")
+            sys.exit(1)
         bootstrap_data = bootstrap_resp.json()
     except Exception as e:
         print(f"ERROR fetching bootstrap data: {e}")
@@ -392,7 +392,10 @@ def get_fpl_data():
 
     try:
         fixtures_resp = requests.get("https://fantasy.premierleague.com/api/fixtures/", headers=headers)
-        fixtures_data = fixtures_resp.json()
+        if fixtures_resp.status_code == 200:
+            fixtures_data = fixtures_resp.json()
+        else:
+            fixtures_data = []
     except Exception as e:
         fixtures_data = []
         
@@ -542,7 +545,6 @@ def get_fpl_data():
     )
     optimal_squad = starters + bench
 
-    # Generate Mitigation Flags for prompt ingestion
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
     opportunity_flags = evaluate_dynamic_opportunity_cost(free_transfers, starters)
     mitigation_flags_str = "\n".join(european_flags + opportunity_flags) if (european_flags or opportunity_flags) else "[No active mitigation warning flags triggered]"
@@ -587,7 +589,7 @@ def get_fpl_data():
 
 def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
     gw1_override = ""
-    if target_gw == 1 or "Unlimited" in str(free_transfers):
+    if target_gw == 1 or str(free_transfers).lower() == "unlimited":
         gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore point-hit constraints (Law 4)."
 
     if WORKFLOW_INPUT == "post_gameweek_review":
@@ -650,16 +652,28 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     return prompt
 
 def send_to_discord(webhook_url, text):
-    lines = text.split("\n")
+    chunks = []
     current_chunk = ""
-    for line in lines:
+    for line in text.split("\n"):
+        # Force-split single lines that are obscenely long (e.g. wide markdown tables)
+        while len(line) > 1800:
+            if len(current_chunk) > 0:
+                chunks.append(current_chunk)
+                current_chunk = ""
+            chunks.append(line[:1800])
+            line = line[1800:]
+            
         if len(current_chunk) + len(line) + 1 > 1800:
-            requests.post(webhook_url, json={"content": current_chunk})
+            chunks.append(current_chunk)
             current_chunk = line + "\n"
         else:
             current_chunk += line + "\n"
+            
     if current_chunk.strip():
-        requests.post(webhook_url, json={"content": current_chunk})
+        chunks.append(current_chunk)
+        
+    for chunk in chunks:
+        requests.post(webhook_url, json={"content": chunk})
 
 def main():
     target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str = get_fpl_data()
@@ -674,7 +688,7 @@ def main():
     
     try:
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
+            model='gemini-2.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
