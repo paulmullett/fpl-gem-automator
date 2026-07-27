@@ -100,17 +100,30 @@ def get_live_fpl_news():
     return news_text
 
 def get_base_ev(p):
-    """Calculates a baseline 1-Gameweek Expected Value, ejecting confirmed absentees."""
+    """Calculates a baseline 1-Gameweek Expected Value utilizing API underlying metrics."""
     chance = p.get("chance_of_playing_next_round")
-    # Hard Injury Ejection Penalty
-    if chance in [0, "0"] or p.get("status") not in ["a", "d"]:
+    if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
         return -100.0  
     try:
         ep = float(p.get("ep_next", 0.0))
+        xgi = float(p.get("xgi_90", 0.0))
+        xgc = float(p.get("xgc_90", 0.0))
+        
         if ep <= 0.0:
             tp = float(p.get("total_points", 0.0))
             form = float(p.get("form", 0.0))
             ep = (tp / 38.0) + form
+
+        # Moneyball EV Integration: Blending FPL algorithms with pure xGI/xGC underlying data
+        if p["pos_id"] in [3, 4]: 
+            ep = (ep * 0.7) + (xgi * 2.0)
+        elif p["pos_id"] == 2: 
+            cs_boost = max(0, 1.5 - xgc)
+            ep = (ep * 0.7) + cs_boost + (xgi * 1.0)
+        elif p["pos_id"] == 1: 
+            cs_boost = max(0, 1.5 - xgc)
+            ep = (ep * 0.7) + (cs_boost * 1.5)
+            
         return ep
     except:
         return 0.0
@@ -120,48 +133,49 @@ def get_macro_ev(p, team_avg_fdr):
     base_ev = get_base_ev(p)
     if base_ev <= -100.0:
         return -100.0
-    ev_4gw = base_ev * 4.0
     
-    # 4-Gameweek FDR Multiplier Adjustment
+    ev_4gw = base_ev * 4.0
     avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
     fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * 0.1)
     
     return ev_4gw * fdr_multiplier
 
 def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr):
-    """Unified Single-Step Linear Solver for Squad, Starting XI, and Captaincy."""
+    """Unified Single-Step Linear Solver incorporating economic tie-breakers."""
     prob = pulp.LpProblem("FPL_Unified_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
-    # Decision Variables
     squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
     starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
     captain_vars = pulp.LpVariable.dicts("captain", valid_ids, cat="Binary")
     extra_transfers = pulp.LpVariable("extra_transfers", lowBound=0, cat="Continuous")
     
-    # Objective: Maximize Starter EV + Captain EV + (0.1 * Bench EV) - (4.0 * Extra Transfers)
     objective = []
     for i in valid_ids:
-        ev = get_macro_ev(players_dict[i], team_avg_fdr)
-        # 90% Bench Discount forces budget into the Starting XI.
-        # Captaincy inclusion guarantees premium assets like Haaland are mathematically valued.
-        objective.append((ev * starter_vars[i]) + (ev * captain_vars[i]) + (0.1 * ev * (squad_vars[i] - starter_vars[i])))
+        p = players_dict[i]
+        ev = get_macro_ev(p, team_avg_fdr)
+        own_tiebreaker = float(p.get("own", 0.0)) * 0.0001
+        
+        # Maximize: Starters + Captain Multiplier + Bench Discount + Economic Volatility Protection
+        objective.append(
+            (ev * starter_vars[i]) + 
+            (ev * captain_vars[i]) + 
+            (0.1 * ev * (squad_vars[i] - starter_vars[i])) + 
+            (own_tiebreaker * squad_vars[i])
+        )
         
     prob += pulp.lpSum(objective) - (4.0 * extra_transfers)
     
-    # Variable Hierarchy Links & Injury Ejections
     for i in valid_ids:
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
         
-        # Hard constraint to prevent buying injured players
         if i not in current_squad_ids:
             p = players_dict[i]
             chance = p.get("chance_of_playing_next_round")
-            if chance in [0, "0"] or p.get("status") not in ["a", "d"]:
+            if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
                 
-    # 15-Man Squad Constraints
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
     prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= total_budget
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
@@ -173,7 +187,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     for t_id in team_ids:
         prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
-    # Starting XI & Formation Constraints
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
     prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
     
@@ -185,7 +198,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
 
-    # Point-Hit Penalty Mathematics
     if free_transfers != "Unlimited":
         try:
             ft = int(str(free_transfers).replace("+", "").strip())
@@ -221,15 +233,20 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
     vice = None
+    
+    # VC Rotation Hedging: Search for the safest guaranteed 90-minute starter behind the Captain
     for p in starters_sorted_by_ep:
         if not cap or p["id"] != cap["id"]:
-            vice = p
-            break
+            if float(p.get("xgi_90", 0.0)) > 0.0 or p["pos_id"] == 1: 
+                vice = p
+                break
+    if not vice and len(starters_sorted_by_ep) > 1:
+        vice = starters_sorted_by_ep[1]
             
     return starters, sorted_bench, cap, vice
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/5.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/6.0"}
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -291,7 +308,9 @@ def get_fpl_data():
             "total_points": p.get("total_points", 0),
             "form": p.get("form", "0.0"),
             "own": p.get("selected_by_percent", 0),
-            "chance_of_playing_next_round": p.get("chance_of_playing_next_round")
+            "chance_of_playing_next_round": p.get("chance_of_playing_next_round"),
+            "xgi_90": p.get("expected_goal_involvements_per_90", "0.0"),
+            "xgc_90": p.get("expected_goals_conceded_per_90", "0.0")
         }
         
     market_list = []
