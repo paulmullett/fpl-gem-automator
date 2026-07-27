@@ -65,16 +65,32 @@ Structure analysis strictly into these 5 sections:
 5. ITK & Congestion Audit (Impact of verified Tier-1 leaks, hook rates, and 72-hour cup turnarounds).
 """
 
-# 2. State Persistence Engine
+# 2. State Persistence & Calibration Engine
 def load_state():
-    """Loads long-term state memory from fpl_state.json."""
+    """Loads long-term state memory and calibration weights from fpl_state.json."""
+    default_state = {
+        "buyback_targets": {},
+        "last_updated_gw": 0,
+        "calibration_weights": {
+            "xgi_weight": 0.70,
+            "fdr_impact_factor": 0.10,
+            "bench_discount": 0.10
+        },
+        "pending_evaluation": None,
+        "performance_history": []
+    }
     if os.path.exists(STATE_FILE_PATH):
         try:
             with open(STATE_FILE_PATH, "r") as f:
-                return json.load(f)
+                saved_state = json.load(f)
+                # Ensure all key sections exist
+                for key, val in default_state.items():
+                    if key not in saved_state:
+                        saved_state[key] = val
+                return saved_state
         except Exception as e:
             print(f"WARNING: Error reading state file: {e}")
-    return {"buyback_targets": {}, "last_updated_gw": 0}
+    return default_state
 
 def save_state(state):
     """Saves updated strategic state memory back to fpl_state.json."""
@@ -84,6 +100,64 @@ def save_state(state):
         print("STATE ENGINE: Successfully saved updated strategy state to fpl_state.json")
     except Exception as e:
         print(f"ERROR: Failed to save state file: {e}")
+
+def recalibrate_model(state, headers, active_gw):
+    """Post-Mortem Engine: Checks past predictions, calculates error, and nudges weights."""
+    pending = state.get("pending_evaluation")
+    if not pending:
+        return state
+
+    eval_gw = pending.get("gw")
+    # Only evaluate if the gameweek has completed
+    if active_gw <= eval_gw:
+        return state
+
+    print(f"CALIBRATION ENGINE: Evaluating Gameweek {eval_gw} model accuracy...")
+    
+    # Fetch actual points scored by team in the evaluated GW
+    gw_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{eval_gw}/picks/"
+    try:
+        resp = requests.get(gw_history_url, headers=headers)
+        if resp.status_code == 200:
+            data = resp.json()
+            actual_points = data.get("entry_history", {}).get("points", 0)
+            projected_xP = pending.get("projected_xP", 0.0)
+            residual_error = actual_points - projected_xP
+
+            # Record in history ledger
+            history_entry = {
+                "gw": eval_gw,
+                "projected_xP": round(projected_xP, 2),
+                "actual_points": actual_points,
+                "residual_error": round(residual_error, 2),
+                "captain": pending.get("captain")
+            }
+            state["performance_history"].append(history_entry)
+            print(f"CALIBRATION: GW{eval_gw} Actual: {actual_points} pts | Projected: {projected_xP:.1f} xP | Error: {residual_error:+.1f}")
+
+            # Rolling window calibration (last 6 GWs)
+            recent_history = state["performance_history"][-6:]
+            if len(recent_history) >= 2:
+                mean_error = sum(h["residual_error"] for h in recent_history) / len(recent_history)
+                weights = state["calibration_weights"]
+                learning_rate = 0.02
+
+                # Micro-nudges bounded within safety guardrails
+                if mean_error < -5.0:  # Persistent over-projection: damp metrics
+                    weights["xgi_weight"] = max(0.50, round(weights["xgi_weight"] - learning_rate, 3))
+                    weights["bench_discount"] = min(0.20, round(weights["bench_discount"] + learning_rate, 3))
+                    print(f"CALIBRATION NUDGE: Lowered xGI weight to {weights['xgi_weight']} due to negative bias ({mean_error:.2f}).")
+                elif mean_error > 5.0:  # Persistent under-projection: boost metrics
+                    weights["xgi_weight"] = min(1.00, round(weights["xgi_weight"] + learning_rate, 3))
+                    weights["bench_discount"] = max(0.05, round(weights["bench_discount"] - learning_rate, 3))
+                    print(f"CALIBRATION NUDGE: Raised xGI weight to {weights['xgi_weight']} due to positive bias ({mean_error:.2f}).")
+
+            # Clear evaluated item
+            state["pending_evaluation"] = None
+    except Exception as e:
+        print(f"WARNING: Error during model recalibration: {e}")
+
+    return state
 
 # 3. Live Search Data Fetcher
 def get_live_fpl_news():
@@ -109,8 +183,8 @@ def get_live_fpl_news():
         
     return news_text
 
-# 4. Quantitative Expected Value Engine
-def get_base_ev(p):
+# 4. Calibrated Expected Value Engine
+def get_base_ev(p, weights):
     """Calculates 1-Gameweek EV combining API endpoints and underlying xGI/xGC metrics."""
     chance = p.get("chance_of_playing_next_round")
     if chance in [0, "0", 0.0] or p.get("status") not in ["a", "d"]:
@@ -119,6 +193,7 @@ def get_base_ev(p):
         ep = float(p.get("ep_next", 0.0))
         xgi = float(p.get("xgi_90", 0.0))
         xgc = float(p.get("xgc_90", 0.0))
+        xgi_mult = weights.get("xgi_weight", 0.70)
         
         if ep <= 0.0:
             tp = float(p.get("total_points", 0.0))
@@ -126,10 +201,10 @@ def get_base_ev(p):
             ep = (tp / 38.0) + form
 
         if p["pos_id"] in [3, 4]: 
-            ep = (ep * 0.7) + (xgi * 2.0)
+            ep = (ep * (1.0 - (xgi_mult / 2.0))) + (xgi * (xgi_mult * 2.8))
         elif p["pos_id"] == 2: 
             cs_boost = max(0, 1.5 - xgc)
-            ep = (ep * 0.7) + cs_boost + (xgi * 1.0)
+            ep = (ep * 0.7) + cs_boost + (xgi * xgi_mult)
         elif p["pos_id"] == 1: 
             cs_boost = max(0, 1.5 - xgc)
             ep = (ep * 0.7) + (cs_boost * 1.5)
@@ -138,23 +213,25 @@ def get_base_ev(p):
     except:
         return 0.0
 
-def get_macro_ev(p, team_avg_fdr):
+def get_macro_ev(p, team_avg_fdr, weights):
     """Calculates 4-Gameweek EV incorporating schedule difficulty multipliers."""
-    base_ev = get_base_ev(p)
+    base_ev = get_base_ev(p, weights)
     if base_ev <= -100.0:
         return -100.0
     
     ev_4gw = base_ev * 4.0
     avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
-    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * 0.1)
+    fdr_impact = weights.get("fdr_impact_factor", 0.10)
+    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
     
     return ev_4gw * fdr_multiplier
 
 # 5. Mixed-Integer Linear Programming (MILP) Solver
-def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation):
-    """Unified Single-Step Linear Solver incorporating Trapped Equity and Liquidity constraints."""
+def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights):
+    """Unified Single-Step Linear Solver incorporating Trapped Equity, Liquidity, and Calibrated Weights."""
     prob = pulp.LpProblem("FPL_Moneyball_Unified", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
+    bench_discount = weights.get("bench_discount", 0.10)
     
     squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
     starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
@@ -164,14 +241,14 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     objective = []
     for i in valid_ids:
         p = players_dict[i]
-        ev = get_macro_ev(p, team_avg_fdr)
+        ev = get_macro_ev(p, team_avg_fdr, weights)
         own_tiebreaker = float(p.get("own", 0.0)) * 0.0001
         
-        # Objective: Starters + Captain Double + 10% Bench Discount + Ownership Volatility Protection
+        # Objective: Starters + Captain Double + Calibrated Bench Discount + Ownership Volatility Protection
         objective.append(
             (ev * starter_vars[i]) + 
             (ev * captain_vars[i]) + 
-            (0.1 * ev * (squad_vars[i] - starter_vars[i])) + 
+            (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
         
@@ -182,7 +259,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
         
-        # Hard constraint to prevent transferring IN injured assets
         if i not in current_squad_ids:
             p = players_dict[i]
             chance = p.get("chance_of_playing_next_round")
@@ -248,10 +324,10 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     starters.sort(key=lambda x: x["pos_id"])
     
     bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_macro_ev(x, team_avg_fdr, weights), reverse=True)
     sorted_bench = bench_gk + bench_outfield
     
-    starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
+    starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr, weights), reverse=True)
     vice = None
     for p in starters_sorted_by_ep:
         if not cap or p["id"] != cap["id"]:
@@ -265,7 +341,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
 # 6. Main Data Pipeline & Strategic Processing
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/7.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/8.0"}
     state = load_state()
     
     try:
@@ -283,7 +359,10 @@ def get_fpl_data():
     target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
     
+    # Run Post-Mortem Calibration Engine
+    state = recalibrate_model(state, headers, active_gw)
     state["last_updated_gw"] = target_gw
+    weights = state["calibration_weights"]
 
     # Fetch Fixtures for 4-GW FDR
     try:
@@ -350,7 +429,7 @@ def get_fpl_data():
             new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: {news_msg}")
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
     
-    # Fetch User Squad & Public Transfer Ledger
+    # Fetch Squad & Transfer Ledger
     squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
     transfers_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/transfers/"
     
@@ -387,16 +466,13 @@ def get_fpl_data():
             purchase_price_raw = now_cost_raw - p["cost_change_start"]
             
         profit = now_cost_raw - purchase_price_raw
-        if profit > 0:
-            selling_price_raw = purchase_price_raw + (profit // 2)
-        else:
-            selling_price_raw = now_cost_raw
+        selling_price_raw = purchase_price_raw + (profit // 2) if profit > 0 else now_cost_raw
             
         p["purchase_price"] = purchase_price_raw / 10.0
         p["selling_price"] = selling_price_raw / 10.0
         liquid_squad_value += p["selling_price"]
 
-    # Fetch Current Bank Balance
+    # Fetch Bank Balance
     bank = 0.0
     free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
     try:
@@ -420,27 +496,22 @@ def get_fpl_data():
             updated_targets[pid_str] = target_info
             if int(pid_str) not in current_squad_ids:
                 required_bank_reservation += target_info["reserved_bank"]
-        else:
-            print(f"STATE ENGINE: Buyback timeline for {target_info['name']} reached in GW{target_gw}. Executing re-entry check.")
 
-    # Check for NEW long-term premium injuries in current squad
     for pid in current_squad_ids:
         p = players[pid]
         chance = p.get("chance_of_playing_next_round")
         if chance in [0, "0", 0.0, 25, "25", 50, "50"] and p["cost"] >= 9.0:
             trapped_equity = p["cost"] - p["selling_price"]
-            injury_weeks = 4  # Default estimation for red/orange flags
+            injury_weeks = 4
             remaining_season_gws = max(1, 38 - target_gw)
             
-            # Moneyball Crossover Evaluation
-            short_term_replacement_gain = injury_weeks * 4.0  # +4.0 xP/wk avg replacement boost
+            short_term_replacement_gain = injury_weeks * 4.0
             long_term_equity_loss = trapped_equity * 0.25 * remaining_season_gws
             crossover_ev = short_term_replacement_gain - long_term_equity_loss
 
             if crossover_ev > 0:
-                print(f"MONEYBALL ENGINE: Selling injured premium {p['name']}. Net Crossover EV: +{crossover_ev:.1f} xP.")
                 target_buyback_price = p["cost"]
-                buyback_reserve = max(0.0, target_buyback_price - 7.5) # Reserve delta vs £7.5m mid replacement
+                buyback_reserve = max(0.0, target_buyback_price - 7.5)
                 
                 updated_targets[str(pid)] = {
                     "name": p["name"],
@@ -453,13 +524,25 @@ def get_fpl_data():
                 required_bank_reservation += buyback_reserve
 
     state["buyback_targets"] = updated_targets
-    save_state(state)
 
     # Solve MILP Optimization
     starters, bench, cap, vice = solve_fpl_knapsack(
-        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation
+        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights
     )
     optimal_squad = starters + bench
+
+    # Log Pending Evaluation for Next Gameweek
+    projected_starting_xP = sum(get_base_ev(p, weights) for p in starters)
+    if cap:
+        projected_starting_xP += get_base_ev(cap, weights)  # Account for 2x Captain
+        
+    state["pending_evaluation"] = {
+        "gw": target_gw,
+        "projected_xP": round(projected_starting_xP, 2),
+        "captain": cap["name"] if cap else None
+    }
+
+    save_state(state)
     
     locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Liquid Value: £{total_liquid_budget:.1f}m | Reserved Bank: £{required_bank_reservation:.1f}m) ---\n"
     
