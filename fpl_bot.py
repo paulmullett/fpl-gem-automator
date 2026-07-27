@@ -595,7 +595,6 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     if target_gw == 1 or "Unlimited" in str(free_transfers):
         gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: Gameweek 1 has UNLIMITED free transfers. Ignore point-hit constraints (Law 4)."
 
-    # Adapt analytical focus based on manual input trigger
     if WORKFLOW_INPUT == "post_gameweek_review":
         action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
         phase_instructions = """
@@ -622,17 +621,12 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
     4. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
     5. MANDATORY SIGN-OFF: Conclude your response with the 'FINAL LOCKED-IN SQUAD SUMMARY' block."""
-    2. Phase-Specific Focus ({action_type}):
-{phase_instructions}
-    3. Analytical Justification: Provide the quantitative trade-off matrix and explain geometric mismatches (Law 3).
-    4. Transfer Economics & Chip Status: Outline banking EV, market volatility, reserved bank capital, and macro chip alignment.
-    5. MANDATORY SIGN-OFF: Conclude your entire response with a highly visible 'FINAL LOCKED-IN SQUAD SUMMARY' block mirroring the exact locked structure provided."""
 
     prompt = f"""
     Run the {action_type} for Gameweek {target_gw}.
     
     ### CURRENT SQUAD STATE & ECONOMICS
-    - Current Bank Balance: £{bank}m | Saved Free Transfers: {free_transfers}
+    - Current Bank Balance: \u00a3{bank}m | Saved Free Transfers: {free_transfers}
     
 {locked_squad_str}
 
