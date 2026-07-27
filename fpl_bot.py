@@ -102,8 +102,9 @@ def get_live_fpl_news():
 def get_base_ev(p):
     """Calculates a baseline 1-Gameweek Expected Value, ejecting confirmed absentees."""
     chance = p.get("chance_of_playing_next_round")
+    # Hard Injury Ejection Penalty
     if chance in [0, "0"] or p.get("status") not in ["a", "d"]:
-        return -100.0  # Tweak 3: Hard Injury Ejection
+        return -100.0  
     try:
         ep = float(p.get("ep_next", 0.0))
         if ep <= 0.0:
@@ -121,105 +122,114 @@ def get_macro_ev(p, team_avg_fdr):
         return -100.0
     ev_4gw = base_ev * 4.0
     
-    # Tweak 1: Algorithmic Multi-Week EV (FDR Adjustment)
+    # 4-Gameweek FDR Multiplier Adjustment
     avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
-    # Deduct 10% per FDR tier above 3.0, add 10% per tier below 3.0
     fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * 0.1)
     
     return ev_4gw * fdr_multiplier
 
 def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr):
-    """Uses linear programming to mathematically select the optimal 15-player squad."""
-    prob = pulp.LpProblem("FPL_Optimal_Squad", pulp.LpMaximize)
+    """Unified Single-Step Linear Solver for Squad, Starting XI, and Captaincy."""
+    prob = pulp.LpProblem("FPL_Unified_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
-    decision_vars = pulp.LpVariable.dicts("player", valid_ids, cat="Binary")
-    
-    # Tweak 2: Linear Point-Hit Penalties
+    # Decision Variables
+    squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
+    starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
+    captain_vars = pulp.LpVariable.dicts("captain", valid_ids, cat="Binary")
     extra_transfers = pulp.LpVariable("extra_transfers", lowBound=0, cat="Continuous")
     
-    # Objective: Maximize total Macro EV minus 4 points per extra transfer beyond FT limit
-    prob += pulp.lpSum([get_macro_ev(players_dict[i], team_avg_fdr) * decision_vars[i] for i in valid_ids]) - (4.0 * extra_transfers)
-    
-    # Constraint: Exclude injured/unavailable players from being transferred IN
+    # Objective: Maximize Starter EV + Captain EV + (0.1 * Bench EV) - (4.0 * Extra Transfers)
+    objective = []
     for i in valid_ids:
+        ev = get_macro_ev(players_dict[i], team_avg_fdr)
+        # 90% Bench Discount forces budget into the Starting XI.
+        # Captaincy inclusion guarantees premium assets like Haaland are mathematically valued.
+        objective.append((ev * starter_vars[i]) + (ev * captain_vars[i]) + (0.1 * ev * (squad_vars[i] - starter_vars[i])))
+        
+    prob += pulp.lpSum(objective) - (4.0 * extra_transfers)
+    
+    # Variable Hierarchy Links & Injury Ejections
+    for i in valid_ids:
+        prob += starter_vars[i] <= squad_vars[i]
+        prob += captain_vars[i] <= starter_vars[i]
+        
+        # Hard constraint to prevent buying injured players
         if i not in current_squad_ids:
             p = players_dict[i]
             chance = p.get("chance_of_playing_next_round")
             if chance in [0, "0"] or p.get("status") not in ["a", "d"]:
-                prob += decision_vars[i] == 0
+                prob += squad_vars[i] == 0
                 
-    # Core Constraints
-    prob += pulp.lpSum([decision_vars[i] for i in valid_ids]) == 15
-    prob += pulp.lpSum([players_dict[i]["cost"] * decision_vars[i] for i in valid_ids]) <= total_budget
+    # 15-Man Squad Constraints
+    prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
+    prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= total_budget
+    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
+    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
+    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
+    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
     
-    # Positional Limits
-    prob += pulp.lpSum([decision_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
-    prob += pulp.lpSum([decision_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
-    prob += pulp.lpSum([decision_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
-    prob += pulp.lpSum([decision_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
-    
-    # Max 3 players per Premier League team
     team_ids = set(players_dict[i]["team_id"] for i in valid_ids)
     for t_id in team_ids:
-        prob += pulp.lpSum([decision_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
+        prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
-    # Transfer Cost Mathematics
+    # Starting XI & Formation Constraints
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
+    prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
+    
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) >= 3
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) <= 5
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) >= 2
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) <= 5
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
+
+    # Point-Hit Penalty Mathematics
     if free_transfers != "Unlimited":
         try:
             ft = int(str(free_transfers).replace("+", "").strip())
         except:
             ft = 1
-        
         if current_squad_ids and len(current_squad_ids) == 15:
             overlap = [i for i in current_squad_ids if i in valid_ids]
-            players_kept = pulp.lpSum([decision_vars[i] for i in overlap])
+            players_kept = pulp.lpSum([squad_vars[i] for i in overlap])
             transfers_made = 15 - players_kept
             prob += extra_transfers >= transfers_made - ft
 
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
-    optimal_squad = [players_dict[i] for i in valid_ids if decision_vars[i].varValue and decision_vars[i].varValue > 0.5]
-    return optimal_squad
-
-def solve_starting_xi(squad_players):
-    """Uses linear programming to mathematically select the optimal 11 starters and bench order."""
-    prob = pulp.LpProblem("Starting_XI", pulp.LpMaximize)
-    ids = [p["id"] for p in squad_players]
-    decision_vars = pulp.LpVariable.dicts("starter", ids, cat="Binary")
     
-    # Objective: Maximize immediate 1-GW EV for the starting lineup
-    prob += pulp.lpSum([get_base_ev(p) * decision_vars[p["id"]] for p in squad_players])
+    starters = []
+    bench = []
+    cap = None
     
-    prob += pulp.lpSum([decision_vars[i] for i in ids]) == 11
-    
-    # Valid Formation Geometry Constraints
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) >= 3
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) <= 5
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) >= 2
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) <= 5
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 4]) >= 1
-    prob += pulp.lpSum([decision_vars[p["id"]] for p in squad_players if p["pos_id"] == 4]) <= 3
-    
-    prob.solve(pulp.PULP_CBC_CMD(msg=False))
-    
-    starters = [p for p in squad_players if decision_vars[p["id"]].varValue and decision_vars[p["id"]].varValue > 0.5]
-    bench = [p for p in squad_players if not (decision_vars[p["id"]].varValue and decision_vars[p["id"]].varValue > 0.5)]
-    
+    for i in valid_ids:
+        if squad_vars[i].varValue and squad_vars[i].varValue > 0.5:
+            p = players_dict[i]
+            if starter_vars[i].varValue and starter_vars[i].varValue > 0.5:
+                starters.append(p)
+                if captain_vars[i].varValue and captain_vars[i].varValue > 0.5:
+                    cap = p
+            else:
+                bench.append(p)
+                
     starters.sort(key=lambda x: x["pos_id"])
     
     bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_base_ev(x), reverse=True)
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
     sorted_bench = bench_gk + bench_outfield
     
-    starters_sorted_by_ep = sorted(starters, key=lambda x: get_base_ev(x), reverse=True)
-    captain = starters_sorted_by_ep[0] if starters_sorted_by_ep else None
-    vice = starters_sorted_by_ep[1] if len(starters_sorted_by_ep) > 1 else None
-    
-    return starters, sorted_bench, captain, vice
+    starters_sorted_by_ep = sorted(starters, key=lambda x: get_macro_ev(x, team_avg_fdr), reverse=True)
+    vice = None
+    for p in starters_sorted_by_ep:
+        if not cap or p["id"] != cap["id"]:
+            vice = p
+            break
+            
+    return starters, sorted_bench, cap, vice
 
 def get_fpl_data():
-    headers = {"User-Agent": "FPL-Auto-Script/4.0"}
+    headers = {"User-Agent": "FPL-Auto-Script/5.0"}
     
     try:
         bootstrap_resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -236,7 +246,6 @@ def get_fpl_data():
     target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
     active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
     
-    # Pre-fetch FDR metrics
     try:
         fixtures_resp = requests.get("https://fantasy.premierleague.com/api/fixtures/", headers=headers)
         fixtures_data = fixtures_resp.json()
@@ -336,11 +345,9 @@ def get_fpl_data():
 
     total_budget = (current_squad_value + bank) if current_squad_ids else 100.0
 
-    # Execute Python Math Optimization
-    optimal_squad = solve_fpl_knapsack(players, current_squad_ids, total_budget, free_transfers, team_avg_fdr)
-    starters, bench, cap, vice = solve_starting_xi(optimal_squad)
+    starters, bench, cap, vice = solve_fpl_knapsack(players, current_squad_ids, total_budget, free_transfers, team_avg_fdr)
+    optimal_squad = starters + bench
     
-    # Format The Locked Output for the LLM
     locked_squad_str = f"--- MATHEMATICALLY LOCKED SQUAD (Total Value: £{total_budget}m) ---\n"
     
     if current_squad_ids:
