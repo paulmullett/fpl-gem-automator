@@ -14,11 +14,9 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 
-# Master Chip Flag ("NONE", "BENCH_BOOST", "FREE_HIT", "TRIPLE_CAPTAIN", "WILDCARD")
 ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
 STATE_FILE_PATH = "fpl_state.json"
 
-# CONFIGURATION: Update this list at the start of each season
 UEFA_TEAMS = {"MCI", "ARS", "LIV", "AVL", "MUN", "NEW", "CHE", "TOT", "SUN"}
 
 if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
@@ -34,30 +32,23 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 
 1. GAME-STATE NORMALISED ATTACKING & ACCIDENTAL ASSISTS
 - Game-State Filter: Normalize non-penalty expected goals (npxG) and expected assisted goals (xAG) strictly to periods when the game state is level (0-0, 1-1) or trailing. Exclude all scoreline-skewed "garbage time" data.
-- Finisher's Multiplier: Apply a multiplier based on a player's multi-season conversion history over their xG.
+- Continuous Market Scalar: The system applies a fluid multiplier to xG based on player cost, reflecting the market's inherent pricing of elite finishing ability.
 - Accidental Assist Rule: FPL awards assists for deflected passes if there is only one defensive touch inside the box. Prioritize "Raw Crosses into the Penalty Box" alongside xAG.
 
 2. DEFENSIVE CONTRIBUTION (DefCon) & 2026/27 BPS MATHEMATICS
 - DefCon Thresholds: Target baseline assets averaging >8.5 CBIT (Clearances, Blocks, Interceptions, Tackles) for defenders, and >10.5 CBIRT (+ Recoveries) for midfielders/forwards.
 - BPS Adjustments: Centre-backs earn 1 BPS per 3 CBI actions. Dribblers face no -1 penalty for being tackled. Penalty goals are a flat 12 BPS for all positions.
-- Goalkeeper Save/Variance Balance: Target goalkeepers only if their team concedes <1.5 Expected Goals Against (xGA) per match.
-- Bench Fodder Exemption: Players priced £4.0m-£4.5m in Bench Slots 3-4 are exempt from starter metric thresholds.
+- Poisson Clean Sheet Probability: Goalkeeper and Defender EV is mathematically derived from an exponential Poisson decay of their team's Expected Goals Against (xGA).
 
-3. SPATIAL GEOMETRY & FLANK MISMATCHES
-- Cross-reference an attacker's primary pitch zone with the opposition's specific spatial weaknesses.
-
-4. CHIP STRUCTURE & 5-TRANSFER ECONOMICS
+3. CHIP STRUCTURE & 5-TRANSFER ECONOMICS
 - 5-Transfer Banking: Evaluate 0-transfer rolls as an appreciating asset building toward a 3-to-5 transfer "mini-wildcard".
 - Point Hit Constraint: Forbidden from recommending a point hit (-4) unless the 4-Gameweek Expected Value (EV) of the incoming player exceeds the outgoing player by >5.5 points, OR if required to field 11 starters.
 
-5. QUALITATIVE OVERRIDES & TIER-1 LEAK VERIFICATION
-- Expected Minutes (xMins) Overrides: Verified Tier-1 ITK/Injury intelligence acts as absolute mathematical overrides to base xMins.
+4. QUALITATIVE OVERRIDES & TIER-1 LEAK VERIFICATION
 - 15-Minute Panic Rule: Late leaks affecting >2 decisions within 15 mins of deadline default to the original multi-week EV plan.
-
-6. MATCH STAKES & FATIGUE MULTIPLIERS
 - Cup Congestion Law: Apply a 25% xMins penalty to starters with <72 hours turnaround from cup matches.
 
-7. FOREIGN TRANSFERS & ZERO-HISTORY ASSETS
+5. FOREIGN TRANSFERS & ZERO-HISTORY ASSETS
 - Translation Discount: Apply a 20% discount to expected attacking output (npxG/xAG) for unproven foreign arrivals.
 - xMins Integration Cap: Cap initial xMins for new arrivals at 45-60 mins for their first 3 Gameweeks.
 
@@ -151,10 +142,8 @@ def recalibrate_model(state, headers, active_gw):
     if active_gw <= eval_gw:
         return state
 
-    print(f"CALIBRATION ENGINE: Evaluating Gameweek {eval_gw} model accuracy...")
-    gw_history_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{eval_gw}/picks/"
     try:
-        resp = requests.get(gw_history_url, headers=headers)
+        resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{eval_gw}/picks/", headers=headers)
         if resp.status_code == 200:
             data = resp.json()
             actual_points = data.get("entry_history", {}).get("points", 0)
@@ -174,12 +163,10 @@ def recalibrate_model(state, headers, active_gw):
                 mean_error = sum(h["residual_error"] for h in recent_history) / len(recent_history)
                 weights = state["calibration_weights"]
                 learning_rate = 0.02
-
                 if mean_error < -5.0:
                     weights["xgi_weight"] = max(0.50, round(weights["xgi_weight"] - learning_rate, 3))
                 elif mean_error > 5.0:
                     weights["xgi_weight"] = min(1.00, round(weights["xgi_weight"] + learning_rate, 3))
-
             state["pending_evaluation"] = None
     except Exception as e:
         print(f"WARNING: Error during model recalibration: {e}")
@@ -203,37 +190,37 @@ def get_live_fpl_news():
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
 
-# 4. Portfolio Risk-Adjusted Predictive Engine with Mitigation Flags
+# 4. Continuous Portfolio Risk-Adjusted Engine
 def estimate_xmins(p):
     chance = str(p.get("chance_of_playing_next_round", ""))
     if chance == "0":
-        return 0
+        return 0.0
     if p.get("status") not in ["a", "d"]:
-        return 0
+        return 0.0
     
     try: own = float(p.get("own", 0.0))
     except: own = 0.0
     try: cost = float(p.get("cost", 0.0))
     except: cost = 0.0
-    
-    if cost >= 8.0:
-        return 90 if own >= 5.0 else 75
-    if cost >= 6.0:
-        if own >= 5.0: return 85
-        elif own >= 1.5: return 65
-        else: return 30
-    
-    if own >= 5.0: return 85
-    elif own >= 1.5: return 65
-    else: return 0
 
-def get_variance_penalty(p, xmins):
-    cost = float(p.get("cost", 0.0))
-    if cost >= 10.0 and xmins >= 85:
-        return 1.0
-    if xmins < 80:
-        return 0.85
-    return 0.95
+    # Logarithmic Ownership Security (Peaks smoothly around 50% ownership)
+    own_security = min(1.0, math.log1p(own) / math.log1p(50.0))
+    
+    # Linear Cost Security (Scales from £4.0m to £10.0m)
+    cost_security = min(1.0, max(0.0, (cost - 4.0) / 6.0))
+    
+    raw_xmins = (own_security * 60.0) + (cost_security * 30.0)
+    
+    # Apply injury chance scaling if active flag exists
+    if chance == "25": raw_xmins *= 0.25
+    elif chance == "50": raw_xmins *= 0.50
+    elif chance == "75": raw_xmins *= 0.75
+        
+    return min(90.0, max(0.0, raw_xmins))
+
+def get_variance_penalty(xmins):
+    # Continuous variance curve based on projected playing time
+    return 0.8 + (min(xmins, 90.0) / 90.0) * 0.2
 
 def get_base_ev(p, weights, xmins_overrides):
     pid_str = str(p["id"])
@@ -242,7 +229,7 @@ def get_base_ev(p, weights, xmins_overrides):
     else:
         xmins = estimate_xmins(p)
         
-    if xmins < 15:
+    if xmins < 5.0:
         return 0.0
         
     try: ep = float(p.get("ep_next", 0.0))
@@ -251,10 +238,11 @@ def get_base_ev(p, weights, xmins_overrides):
     except: xgi = 0.0
     try: xgc = float(p.get("xgc_90", 0.0))
     except: xgc = 0.0
+    try: cost = float(p.get("cost", 0.0))
+    except: cost = 0.0
 
-    # FALLBACK: Prevent missing/zero data from generating 100% Clean Sheet probabilities
     if xgc <= 0.0:
-        xgc = 1.35  # Standard league average xGA baseline
+        xgc = 1.35  
 
     mins_factor = xmins / 90.0
     
@@ -268,16 +256,24 @@ def get_base_ev(p, weights, xmins_overrides):
     elif p["pos_id"] == 3: 
         cs_points = cs_prob * 1.0
         
-    # 2. Attacking Poisson EV
-    attacking_points = (xgi * mins_factor) * 4.5 
+    # 2. Continuous Market-Priced Finisher Curve
+    market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
     
-    # 3. Appearance Points
-    app_points = 2.0 if xmins >= 60 else (1.0 if xmins > 0 else 0.0)
+    # Precise Positional Weighted Attacking Event Scoring (Goals vs Assists)
+    if p["pos_id"] == 2: pos_mult = 4.2       # Defenders (Avg 6pts goal / 3pts assist)
+    elif p["pos_id"] == 3: pos_mult = 4.0     # Midfielders (Avg 5pts goal / 3pts assist)
+    else: pos_mult = 3.6                      # Forwards (Avg 4pts goal / 3pts assist)
+        
+    attacking_points = (xgi * mins_factor) * pos_mult * market_premium_factor
     
-    # Base Raw EV
+    # 3. Logistic Regression (Sigmoid) Appearance Points
+    # Calculates mathematically accurate probability of crossing the 60-minute threshold
+    prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
+    prob_1_59 = (1.0 - prob_60)
+    app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
+    
     raw_ev = app_points + attacking_points + cs_points
     
-    # Blend with FPL's internal EP
     xgi_mult = weights.get("xgi_weight", 0.70)
     final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
     
@@ -290,7 +286,7 @@ def get_macro_ev(p, team_avg_fdr, weights, xmins_overrides):
     
     pid_str = str(p["id"])
     xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-    variance_penalty = get_variance_penalty(p, xmins)
+    variance_penalty = get_variance_penalty(xmins)
     
     ev_4gw = (base_ev * variance_penalty) * 4.0
     
@@ -304,17 +300,7 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
     flags = []
     for p in starters:
         if p["team"] in UEFA_TEAMS:
-            flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion. Consider bench contingency or rotation guard.]")
-    return flags
-
-def evaluate_dynamic_opportunity_cost(free_transfers, starters):
-    flags = []
-    try:
-        ft = int(''.join(filter(str.isdigit, str(free_transfers))))
-        if ft >= 3:
-            flags.append("[FLAG OPTION: Mini-Wildcard Trigger Recommended — Transfer hoarding threshold reached (3+ FTs banked). Evaluate breaking transfer lock to capture imminent price/fixture swings rather than risking cap loss.]")
-    except ValueError:
-        pass
+            flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion.]")
     return flags
 
 # 5. Execution Engine: Portfolio Optimization MILP Solver
@@ -322,7 +308,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
-    # Chip Adjustments
     bench_discount = weights.get("bench_discount", 0.05)
     captain_multiplier = 1.0 
     
@@ -344,12 +329,15 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
         
-        eo_defensive_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
+        # Exponential Quadratic Rank Threat Shield
+        own_pct = ownership / 100.0
+        rank_threat_gravity = (ev * (own_pct ** 2) * 0.75)
+            
         own_tiebreaker = ownership * 0.0001
         
         objective.append(
             (ev * starter_vars[i]) + 
-            ((ev * captain_multiplier + eo_defensive_shield) * captain_vars[i]) + 
+            ((ev * captain_multiplier + rank_threat_gravity) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
             (own_tiebreaker * squad_vars[i])
         )
@@ -358,7 +346,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     for i in valid_ids:
         p = players_dict[i]
-        pid_str = str(i)
         
         prob += starter_vars[i] <= squad_vars[i]
         prob += captain_vars[i] <= starter_vars[i]
@@ -367,10 +354,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
             chance = str(p.get("chance_of_playing_next_round", ""))
             if chance == "0" or p.get("status") not in ["a", "d"]:
                 prob += squad_vars[i] == 0
-                
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        if xmins < 60:
-            prob += starter_vars[i] == 0
 
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
@@ -422,9 +405,11 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         ev_1gw = get_base_ev(p, weights, xmins_overrides) 
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
-        eo_shield = (ownership / 100.0) * 2.5 if ownership >= 40.0 else (ownership / 100.0) * 1.0
         
-        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * captain_multiplier + eo_shield) * c_vars[p["id"]]) )
+        own_pct = ownership / 100.0
+        rank_threat_gravity = (ev_1gw * (own_pct ** 2) * 0.75)
+            
+        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * captain_multiplier + rank_threat_gravity) * c_vars[p["id"]]) )
         
     sub_prob += pulp.lpSum(sub_objective)
     
@@ -433,10 +418,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     for p in squad_players:
         sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
-        pid_str = str(p["id"])
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        if xmins < 60:
-            sub_prob += s_vars[p["id"]] == 0
             
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) >= 3
@@ -598,7 +579,6 @@ def get_fpl_data():
         p["selling_price"] = selling_price_raw / 10.0
         liquid_squad_value += p["selling_price"]
         
-        # Track price volatility in state
         pid_str = str(pid)
         if pid_str not in price_watchlist:
             price_watchlist[pid_str] = p["purchase_price"]
@@ -629,11 +609,16 @@ def get_fpl_data():
     for pid in current_squad_ids:
         p = players[pid]
         chance = str(p.get("chance_of_playing_next_round", ""))
+        
         if chance in ["0", "25", "50"] and p["cost"] >= 9.0:
             trapped_equity = p["cost"] - p["selling_price"]
-            injury_weeks = 4
-            remaining_season_gws = max(1, 38 - target_gw)
             
+            # Dynamic injury timeline estimation based on active flags
+            if chance == "0": injury_weeks = 4
+            elif chance == "25": injury_weeks = 2
+            else: injury_weeks = 1
+                
+            remaining_season_gws = max(1, 38 - target_gw)
             short_term_replacement_gain = injury_weeks * 4.0
             long_term_equity_loss = trapped_equity * 0.25 * remaining_season_gws
             crossover_ev = short_term_replacement_gain - long_term_equity_loss
@@ -658,8 +643,7 @@ def get_fpl_data():
     optimal_squad = starters + bench
 
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
-    opportunity_flags = evaluate_dynamic_opportunity_cost(free_transfers, starters)
-    mitigation_flags_str = "\n".join(european_flags + opportunity_flags) if (european_flags or opportunity_flags) else "[No active mitigation warning flags triggered]"
+    mitigation_flags_str = "\n".join(european_flags) if european_flags else "[No active mitigation warning flags triggered]"
 
     projected_starting_xP = sum(get_base_ev(p, weights, xmins_overrides) for p in starters)
     if cap:
@@ -694,14 +678,14 @@ def get_fpl_data():
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
         actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
-        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins}, TRUE 1-GW EV: {actual_ev}){is_cap}{is_vice}\n"
+        locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev}){is_cap}{is_vice}\n"
         
     locked_squad_str += "\nBENCH:\n"
     for i, p in enumerate(bench):
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
         actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
-        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins}, TRUE 1-GW EV: {actual_ev})\n"
+        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
 
@@ -809,7 +793,7 @@ def main():
     
     try:
         response = client.models.generate_content(
-            model='gemini-3.6-flash',
+            model='gemini-1.5-flash',
             contents=prompt,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
