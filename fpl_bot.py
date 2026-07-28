@@ -34,8 +34,8 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 
 ### CORE ANALYTICAL LAWS & METRIC DEFINITIONS
 
-1. GAME-STATE NORMALISED ATTACKING & ACCIDENTAL ASSISTS
-- Game-State Filter: Normalize non-penalty expected goals (npxG) and expected assisted goals (xAG) strictly to periods when the game state is level (0-0, 1-1) or trailing. Exclude all scoreline-skewed "garbage time" data.
+1. GAME-STATE NORMALISED ATTACKING & BAYESIAN SHRINKAGE
+- Bayesian Filter: Expected goals (xG/xAG) for low-minute fringe players are mathematically shrunken toward positional averages to eliminate small-sample-size data explosions.
 - Continuous Market Scalar: The system applies a fluid multiplier to xG based on player cost, reflecting the market's inherent pricing of elite finishing ability.
 - Accidental Assist Rule: FPL awards assists for deflected passes if there is only one defensive touch inside the box. Prioritize "Raw Crosses into the Penalty Box" alongside xAG.
 
@@ -112,7 +112,7 @@ def load_state():
         "calibration_weights": {
             "xgi_weight": 0.70,
             "fdr_impact_factor": 0.10,
-            "bench_discount": 0.05
+            "bench_discount": 0.01
         },
         "pending_evaluation": None,
         "performance_history": []
@@ -202,8 +202,20 @@ def estimate_xmins(p):
     if p.get("status") not in ["a", "d"]:
         return 0.0
 
-    # Grounded baseline for active squad players
-    raw_xmins = 85.0
+    try: own = float(p.get("own", 0.0))
+    except: own = 0.0
+    try: cost = float(p.get("cost", 0.0))
+    except: cost = 0.0
+
+    pos_id = p.get("pos_id", 3)
+    base_cost = 4.0 if pos_id in [1, 2] else 4.5
+    
+    # Sigmoid Curve: Market Ownership boosts effective cost (confirms starter status)
+    own_boost = min(1.5, (own / 10.0))
+    effective_cost = cost + own_boost
+    
+    x = 2.5 * (effective_cost - (base_cost + 0.5))
+    raw_xmins = 90.0 / (1.0 + math.exp(-x))
     
     # Scale strictly if FPL injury/availability flags are present
     if chance == "25": raw_xmins *= 0.25
@@ -233,36 +245,51 @@ def get_base_ev(p, weights, xmins_overrides):
     except: xgc = 0.0
     try: cost = float(p.get("cost", 0.0))
     except: cost = 0.0
+    try: own = float(p.get("own", 0.0))
+    except: own = 0.0
 
+    pos_id = p["pos_id"]
     if xgc <= 0.0:
         xgc = 1.35  
 
     mins_factor = xmins / 90.0
     
-    # Logistic Regression (Sigmoid) Appearance Points
+    # 1. Bayesian Shrinkage (Filters out extreme xGI anomalies from low-minute players)
+    if pos_id == 1: baseline_xgi = 0.01
+    elif pos_id == 2: baseline_xgi = 0.08
+    elif pos_id == 3: baseline_xgi = 0.25
+    elif pos_id == 4: baseline_xgi = 0.35
+    else: baseline_xgi = 0.10
+    
+    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
+    cost_premium = max(0.0, cost - cost_threshold)
+    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
+    shrunken_xgi = (xgi * confidence) + (baseline_xgi * (1.0 - confidence))
+
+    # 2. Logistic Regression (Sigmoid) Appearance Points
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     prob_1_59 = (1.0 - prob_60)
     app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
 
-    # Poisson Clean Sheet Engine — STRICTLY gated by prob_60 (60-minute rule)
+    # 3. Poisson Clean Sheet Engine — STRICTLY gated by prob_60 (60-minute rule)
     team_xga = xgc * mins_factor
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
     
-    if p["pos_id"] in [1, 2]: 
+    if pos_id in [1, 2]: 
         cs_points = (cs_prob * 4.0) * prob_60
-    elif p["pos_id"] == 3: 
+    elif pos_id == 3: 
         cs_points = (cs_prob * 1.0) * prob_60
     else:
         cs_points = 0.0
         
-    # Continuous Market-Priced Finisher Curve
+    # 4. Continuous Market-Priced Finisher Curve
     market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
     
-    if p["pos_id"] == 2: pos_mult = 4.2       
-    elif p["pos_id"] == 3: pos_mult = 4.0     
+    if pos_id == 2: pos_mult = 4.2       
+    elif pos_id == 3: pos_mult = 4.0     
     else: pos_mult = 3.6                      
         
-    attacking_points = (xgi * mins_factor) * pos_mult * market_premium_factor
+    attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
     
     raw_ev = app_points + attacking_points + cs_points
     
@@ -300,13 +327,13 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
-    bench_discount = weights.get("bench_discount", 0.05)
-    captain_multiplier = 1.0 
-    
+    # Aggressive override to prevent budget bleeding onto the bench
     if active_chip == "BENCH_BOOST":
         bench_discount = 1.0
-    elif active_chip == "TRIPLE_CAPTAIN":
-        captain_multiplier = 2.0
+    else:
+        bench_discount = 0.01 
+        
+    captain_multiplier = 2.0 if active_chip == "TRIPLE_CAPTAIN" else 1.0
         
     squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
     starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
