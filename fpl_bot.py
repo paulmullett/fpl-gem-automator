@@ -28,6 +28,10 @@ client = genai.Client(api_key=GEMINI_API_KEY)
 SYSTEM_INSTRUCTION = """
 You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst and Tactical Decision Engine. Your purpose is to evaluate squad selections, transfers, captaincy choices, and chip strategies using advanced underlying metrics, pitch geometry, game-state data, and FPL market economics. You must strictly adhere to the following analytical laws.
 
+### CORE DATA INTEGRITY GUARDRAILS
+1. STRICT DATA IMMUTABILITY: You must copy player names, team tags, positions, costs, xMins, and EV values EXACTLY as presented in the MATHEMATICALLY LOCKED SQUAD payload. Do NOT alter, overwrite, or assume club affiliations or positions from past historical memory.
+2. ACTIVE MARKET ISOLATION: Base all qualitative commentary exclusively on players active within the provided Premier League database. Ignore mentions of non-Premier League players that may appear in external ITK or search feeds.
+
 ### CORE ANALYTICAL LAWS & METRIC DEFINITIONS
 
 1. GAME-STATE NORMALISED ATTACKING & ACCIDENTAL ASSISTS
@@ -38,7 +42,7 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 2. DEFENSIVE CONTRIBUTION (DefCon) & 2026/27 BPS MATHEMATICS
 - DefCon Thresholds: Target baseline assets averaging >8.5 CBIT (Clearances, Blocks, Interceptions, Tackles) for defenders, and >10.5 CBIRT (+ Recoveries) for midfielders/forwards.
 - BPS Adjustments: Centre-backs earn 1 BPS per 3 CBI actions. Dribblers face no -1 penalty for being tackled. Penalty goals are a flat 12 BPS for all positions.
-- Poisson Clean Sheet Probability: Goalkeeper and Defender EV is mathematically derived from an exponential Poisson decay of their team's Expected Goals Against (xGA).
+- Poisson Clean Sheet Probability: Goalkeeper and Defender EV is mathematically derived from an exponential Poisson decay of their team's Expected Goals Against (xGA), strictly gated by 60-minute threshold probability.
 
 3. CHIP STRUCTURE & 5-TRANSFER ECONOMICS
 - 5-Transfer Banking: Evaluate 0-transfer rolls as an appreciating asset building toward a 3-to-5 transfer "mini-wildcard".
@@ -197,17 +201,11 @@ def estimate_xmins(p):
         return 0.0
     if p.get("status") not in ["a", "d"]:
         return 0.0
-    
-    try: own = float(p.get("own", 0.0))
-    except: own = 0.0
-    try: cost = float(p.get("cost", 0.0))
-    except: cost = 0.0
 
-    own_security = min(1.0, math.log1p(own) / math.log1p(50.0))
-    cost_security = min(1.0, max(0.0, (cost - 4.0) / 6.0))
+    # Grounded baseline for active squad players
+    raw_xmins = 85.0
     
-    raw_xmins = (own_security * 60.0) + (cost_security * 30.0)
-    
+    # Scale strictly if FPL injury/availability flags are present
     if chance == "25": raw_xmins *= 0.25
     elif chance == "50": raw_xmins *= 0.50
     elif chance == "75": raw_xmins *= 0.75
@@ -246,7 +244,7 @@ def get_base_ev(p, weights, xmins_overrides):
     prob_1_59 = (1.0 - prob_60)
     app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
 
-    # Poisson Clean Sheet Engine (Gated by 60-min probability)
+    # Poisson Clean Sheet Engine — STRICTLY gated by prob_60 (60-minute rule)
     team_xga = xgc * mins_factor
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
     
@@ -357,10 +355,11 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
     prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
     
+    # STRICT LEGAL FORMATION CONSTRAINTS (Min 3 DEF, Min 3 MID, Min 1 FWD)
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) >= 3
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) <= 5
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) >= 2
+    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) >= 3
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) <= 5
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
     prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
@@ -412,9 +411,10 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     for p in squad_players:
         sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
             
+    # STRICT LEGAL FORMATION CONSTRAINTS (Phase 2 Sub-Solver)
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) >= 3
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) >= 2
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) >= 3
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 4]) >= 1
     
     sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
@@ -524,7 +524,6 @@ def get_fpl_data():
 
     new_arrivals = []
     for p in players.values():
-        # Law 7 Flagging: Assesses unproven assets via point history instead of parsed news text
         is_new_transfer = (p["total_points"] == 0 and p["cost"] >= 5.5 and p["status"] in ["a", "d"])
         if is_new_transfer:
             new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: Zero Baseline Data")
@@ -707,7 +706,7 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
         )
 
     focus_instructions = (
-        f"1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, or bench order.\n"
+        f"1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, bench order, or team affiliation tag.\n"
         f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
         f"3. Visual Aesthetics: Include monospaced ASCII pitch maps in Section 1 and Section 4 using markdown text codeblocks. Format Section 2 strictly as single-line bullet points with bold player names. Avoid wide Markdown tables.\n"
         f"4. Analytical Justification: Use the EXACT 'TRUE 1-GW EV' numbers provided in the mathematically locked squad list below. Do NOT invent or hallucinate Expected Value (EV) numbers. Format Section 2 strictly as single-line bullet points with bold player names.\n"
@@ -737,7 +736,7 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     1. Base all transfer and squad analysis STRICTLY on the Mathematically Locked Squad provided.
     2. Do NOT hallucinate players who are not currently active in the Premier League.
     3. Evaluate incoming transfer replacements STRICTLY using the ACTIVE 2026/27 TRANSFER MARKET WATCHLIST provided.
-    4. LIVE NEWS OVERRIDE: Cross-reference the Market Watchlist against LIVE ITK NEWS and LONG TERM INJURIES.
+    4. LIVE NEWS OVERRIDE: Cross-reference the Market Watchlist against LIVE ITK NEWS and LONG TERM INJURIES. Ignore search items referencing non-Premier League players.
     5. FOREIGN TRANSFERS: Apply Law 7 to any players listed under NEW ARRIVALS. Highlight them for manual monitoring in Section 1.{gw1_override}
     
     ### DATA INSTRUCTIONS FOR EVALUATION
