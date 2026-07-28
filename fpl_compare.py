@@ -134,31 +134,12 @@ def solve_model(players_dict, use_ensemble=False):
     starters = [players_dict[i] for i in valid_ids if starter_vars[i].varValue and starter_vars[i].varValue > 0.5]
     captain = next((players_dict[i] for i in valid_ids if captain_vars[i].varValue and captain_vars[i].varValue > 0.5), None)
     
-    total_xp = sum(get_base_ev(s, {}) for s in starters)
+    ev_func = get_ensemble_ev if use_ensemble else get_base_ev
+    total_xp = sum(ev_func(s, {}) for s in starters)
     if captain:
-        total_xp += get_base_ev(captain, {})
+        total_xp += ev_func(captain, {})
 
-   starters = [
-      players_dict[i]
-      for i in valid_ids
-      if starter_vars[i].varValue and starter_vars[i].varValue > 0.5
-  ]
-  captain = next(
-      (
-          players_dict[i]
-          for i in valid_ids
-          if captain_vars[i].varValue and captain_vars[i].varValue > 0.5
-      ),
-      None,
-  )
-
-  # FIX: Use get_ensemble_ev if use_ensemble is True
-  ev_func = get_ensemble_ev if use_ensemble else get_base_ev
-  total_xp = sum(ev_func(s, {}) for s in starters)
-  if captain:
-    total_xp += ev_func(captain, {})
-
-  return starters, captain, total_xp
+    return starters, captain, total_xp
 
 def run_comparison():
     headers = {"User-Agent": "FPL-Compare-Script/1.0"}
