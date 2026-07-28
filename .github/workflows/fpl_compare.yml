@@ -18,7 +18,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests pulp google-genai
+          pip install requests pulp google-genai ddgs
 
       - name: Run Comparison Script
         env:
