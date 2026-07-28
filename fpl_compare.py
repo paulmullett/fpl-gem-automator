@@ -6,6 +6,8 @@ import pulp
 import math
 
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
+DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
+
 if not FPL_TEAM_ID:
     print("CRITICAL ERROR: Missing FPL_TEAM_ID environment variable.")
     sys.exit(1)
@@ -141,6 +143,22 @@ def solve_model(players_dict, use_ensemble=False):
 
     return starters, captain, total_xp
 
+def send_to_discord(base_xp, ens_xp, diffs, base_cap, ens_cap):
+    if not DISCORD_WEBHOOK_URL:
+        return
+    
+    diff_text = f"{len(diffs)} divergent starter(s)." if diffs else "No starting XI differences."
+    content = (
+        f"**[Model Comparison Audit]**\n"
+        f"• **Baseline xP:** `{base_xp:.2f}` | Captain: `{base_cap['name'] if base_cap else 'None'}`\n"
+        f"• **Ensemble xP:** `{ens_xp:.2f}` | Captain: `{ens_cap['name'] if ens_cap else 'None'}`\n"
+        f"• **Delta:** `{ens_xp - base_xp:+.2f} pts` | {diff_text}"
+    )
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
+    except Exception as e:
+        print(f"Failed to send Discord webhook: {e}")
+
 def run_comparison():
     headers = {"User-Agent": "FPL-Compare-Script/1.0"}
     resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
@@ -164,10 +182,6 @@ def run_comparison():
             "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", ""))
         }
 
-    print("========================================================")
-    print("               MODEL COMPARISON RUN                     ")
-    print("========================================================")
-
     base_starters, base_cap, base_xp = solve_model(players, use_ensemble=False)
     ens_starters, ens_cap, ens_xp = solve_model(players, use_ensemble=True)
 
@@ -175,18 +189,11 @@ def run_comparison():
     ens_ids = {s["id"] for s in ens_starters}
     diffs = ens_ids.symmetric_difference(base_ids)
 
-    print(f"\n[BASELINE MODEL] Projected Starting xP: {base_xp:.2f} | Captain: {base_cap['name'] if base_cap else 'None'}")
-    for s in base_starters:
-        print(f"  - {s['name']} ({s['team']}, {s['pos']}, £{s['cost']}m)")
+    print(f"[BASELINE MODEL] Projected Starting xP: {base_xp:.2f} | Captain: {base_cap['name'] if base_cap else 'None'}")
+    print(f"[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f} | Captain: {ens_cap['name'] if ens_cap else 'None'}")
+    print(f"PROJECTED XP DELTA: {ens_xp - base_xp:+.2f} pts | STARTING XI DIFFERENCES: {len(diffs)}")
 
-    print(f"\n[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f} | Captain: {ens_cap['name'] if ens_cap else 'None'}")
-    for s in ens_starters:
-        print(f"  - {s['name']} ({s['team']}, {s['pos']}, £{s['cost']}m)")
-
-    print("\n--------------------------------------------------------")
-    print(f"PROJECTED XP DELTA (Ensemble vs Baseline): {ens_xp - base_xp:+.2f} pts")
-    print(f"STARTING XI DIFFERENCES: {len(diffs)} player(s) divergent.")
-    print("========================================================")
+    send_to_discord(base_xp, ens_xp, diffs, base_cap, ens_cap)
 
 if __name__ == "__main__":
     run_comparison()
