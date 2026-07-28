@@ -50,6 +50,34 @@ def estimate_xmins(p):
         
     return min(90.0, max(0.0, raw_xmins))
 
+# Tiered empirical translation coefficients based on source competition
+LEAGUE_TRANSLATION_FACTORS = {
+    "Premier_League": 1.00,
+    "Champions_League": 0.95, 
+    "Bundesliga": 0.88,
+    "Serie_A": 0.85,
+    "La_Liga": 0.86,
+    "Ligue_1": 0.82,
+    "Eredivisie": 0.78,
+    "Pro_League": 0.76,      # e.g., Belgian Pro League (Club Brugge benchmark)
+    "Championship": 0.85,
+    "Other_Foreign": 0.70
+}
+
+def get_smart_translation_multiplier(p):
+    """
+    Evaluates league tier and applies the 'Returning Player Exception' 
+    if an asset had a stale/failed early PL stint but exploded in Europe since.
+    """
+    league = p.get("source_league", "Premier_League")
+    
+    # Exception check: If they have old, low-minute PL history (like early-career Tzolis) 
+    # but recent elite European/Champions League output, override the stale penalty.
+    if p.get("has_stale_pl_history") and p.get("recent_european_peak", False):
+        return 0.92  # Gentle adjustment reflecting growth, avoiding the harsh rookie penalty
+        
+    return LEAGUE_TRANSLATION_FACTORS.get(league, 0.75)
+
 def get_base_ev(p, xmins_overrides):
     pid_str = str(p["id"])
     xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
@@ -71,7 +99,28 @@ def get_base_ev(p, xmins_overrides):
     baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
     confidence = min(1.0, (own / 15.0) + (max(0.0, cost - cost_threshold) / 2.0))
-    shrunken_xgi = (xgi * confidence) + (baseline_xgi * (1.0 - confidence))
+
+    try:
+        ep = float(p.get("ep_next", 0.0))
+        xgi = float(p.get("xgi_90", 0.0))
+        xgc = float(p.get("xgc_90", 0.0) or 1.35)
+        cost = float(p.get("cost", 0.0))
+        own = float(p.get("own", 0.0))
+    except:
+        ep, xgi, xgc, cost, own = 0.0, 0.0, 1.35, 4.0, 0.0
+
+    pos_id = p["pos_id"]
+    mins_factor = xmins / 90.0
+    
+    baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
+    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
+    confidence = min(1.0, (own / 15.0) + (max(0.0, cost - cost_threshold) / 2.0))
+    
+    # --- UPGRADED TRANSLATION LOGIC ---
+    translation_mult = get_smart_translation_multiplier(p)
+    adjusted_xgi = xgi * translation_mult
+    
+    shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
 
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     app_points = (prob_60 * 2.0) + ((1.0 - prob_60) * 1.0)
