@@ -15,6 +15,17 @@ if not FPL_TEAM_ID:
     print("CRITICAL ERROR: Missing FPL_TEAM_ID environment variable.")
     sys.exit(1)
 
+def get_user_current_squad(team_id):
+    url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/1/picks/"
+    try:
+        resp = requests.get(url, headers={"User-Agent": "FPL-Compare-Script/1.0"}, timeout=5)
+        if resp.status_code == 200:
+            picks = resp.json().get("picks", [])
+            return [p["element"] for p in picks]
+    except Exception as e:
+        print(f"Could not fetch user picks for team {team_id}: {e}")
+    return []
+
 def estimate_xmins(p):
     chance = str(p.get("chance_of_playing_next_round", ""))
     if chance == "0" or p.get("status") not in ["a", "d"]:
@@ -220,13 +231,16 @@ def run_comparison():
 
     print("Fetching live market odds adjustments...")
     market_data = get_market_adjustments()
-
+    
     print("Running Monte Carlo simulations...")
     mc_results = run_monte_carlo_simulations(players, num_trials=1000)
 
+    print("Fetching user squad picks...")
+    user_squad_ids = get_user_current_squad(FPL_TEAM_ID)
+
     base_starters, base_cap, base_xp = solve_model(players, market_data, use_ensemble=False)
     ens_starters, ens_cap, ens_xp = solve_model(players, market_data, use_ensemble=True)
-    mpo_starters, mpo_cap, mpo_xp = solve_multi_period_model(players, horizons=3)
+    mpo_starters, mpo_cap, mpo_xp = solve_multi_period_model(players, current_squad_ids=user_squad_ids, horizons=3)
 
     print(f"[BASELINE MODEL] Projected Starting xP: {base_xp:.2f}")
     print(f"[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f}")
