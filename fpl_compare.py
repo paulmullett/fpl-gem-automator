@@ -6,6 +6,7 @@ import math
 
 from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
+from fpl_monte_carlo import run_monte_carlo_simulations
 
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -157,16 +158,22 @@ def solve_model(players_dict, market_data, use_ensemble=False):
 
     return starters, captain, total_xp
 
-def send_to_discord(base_xp, ens_xp, mpo_xp, diffs, base_cap, ens_cap, mpo_cap):
+def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, diffs, base_cap, ens_cap, mpo_cap):
     if not DISCORD_WEBHOOK_URL:
         return
     
+    # Calculate aggregate team stochastic ceiling and floor from Monte Carlo simulation
+    total_mc_floor = sum(res["floor"] for res in mc_results.values())
+    total_mc_ceiling = sum(res["ceiling"] for res in mc_results.values())
+    
     diff_text = f"{len(diffs)} divergent starter(s)." if diffs else "No starting XI differences."
     content = (
-        f"**[Advanced Model Comparison Audit: Odds + MPO]**\n"
+        f"**[Master Model Audit: Odds + MPO + Monte Carlo]**\n"
         f"• **Baseline xP:** `{base_xp:.2f}` | Captain: `{base_cap['name'] if base_cap else 'None'}`\n"
         f"• **Ensemble xP:** `{ens_xp:.2f}` | Captain: `{ens_cap['name'] if ens_cap else 'None'}`\n"
         f"• **Multi-Period (3W) xP:** `{mpo_xp:.2f}` | Captain: `{mpo_cap['name'] if mpo_cap else 'None'}`\n"
+        f"• **Stochastic Floor (10th %):** `{total_mc_floor:.1f} pts`\n"
+        f"• **Stochastic Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`\n"
         f"• **Ensemble Delta:** `{ens_xp - base_xp:+.2f} pts` | {diff_text}"
     )
     try:
@@ -187,6 +194,7 @@ def run_comparison():
 
     players = {}
     for p in data["elements"]:
+        est_mins = estimate_xmins(p)
         players[p["id"]] = {
             "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
             "team_id": p["team"], "pos": element_types.get(p["element_type"], "UNK"),
@@ -194,11 +202,15 @@ def run_comparison():
             "status": p["status"], "news": p["news"], "ep_next": str(p.get("ep_next", "0.0")),
             "form": str(p.get("form", "0.0")), "total_points": p.get("total_points", 0),
             "own": str(p.get("selected_by_percent", "0.0")),
-            "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", ""))
+            "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
+            "est_xmins": est_mins, "xgi_90": float(p.get("creativity", 0.0) or 0.2) / 100.0
         }
 
     print("Fetching live market odds adjustments...")
     market_data = get_market_adjustments()
+
+    print("Running Monte Carlo simulations...")
+    mc_results = run_monte_carlo_simulations(players, num_trials=1000)
 
     base_starters, base_cap, base_xp = solve_model(players, market_data, use_ensemble=False)
     ens_starters, ens_cap, ens_xp = solve_model(players, market_data, use_ensemble=True)
@@ -212,7 +224,7 @@ def run_comparison():
     print(f"[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f}")
     print(f"[MPO MODEL] 3-Week Horizon Projected xP: {mpo_xp:.2f}")
 
-    send_to_discord(base_xp, ens_xp, mpo_xp, diffs, base_cap, ens_cap, mpo_cap)
+    send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, diffs, base_cap, ens_cap, mpo_cap)
 
 if __name__ == "__main__":
     run_comparison()
