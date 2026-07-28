@@ -158,13 +158,14 @@ def solve_model(players_dict, market_data, use_ensemble=False):
 
     return starters, captain, total_xp
 
-def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, diffs, base_cap, ens_cap, mpo_cap):
+def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, starters, squad_ids, diffs, base_cap, ens_cap, mpo_cap):
     if not DISCORD_WEBHOOK_URL:
         return
     
-    # Calculate aggregate team stochastic ceiling and floor from Monte Carlo simulation
-    total_mc_floor = sum(res["floor"] for res in mc_results.values())
-    total_mc_ceiling = sum(res["ceiling"] for res in mc_results.values())
+    # Correctly sum Monte Carlo floor and ceiling ONLY for the starting XI starters
+    starter_ids = {s["id"] for s in starters}
+    total_mc_floor = sum(mc_results[pid]["floor"] for pid in starter_ids if pid in mc_results)
+    total_mc_ceiling = sum(mc_results[pid]["ceiling"] for pid in starter_ids if pid in mc_results)
     
     diff_text = f"{len(diffs)} divergent starter(s)." if diffs else "No starting XI differences."
     content = (
@@ -172,8 +173,8 @@ def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, diffs, base_cap, ens_ca
         f"• **Baseline xP:** `{base_xp:.2f}` | Captain: `{base_cap['name'] if base_cap else 'None'}`\n"
         f"• **Ensemble xP:** `{ens_xp:.2f}` | Captain: `{ens_cap['name'] if ens_cap else 'None'}`\n"
         f"• **Multi-Period (3W) xP:** `{mpo_xp:.2f}` | Captain: `{mpo_cap['name'] if mpo_cap else 'None'}`\n"
-        f"• **Stochastic Floor (10th %):** `{total_mc_floor:.1f} pts`\n"
-        f"• **Stochastic Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`\n"
+        f"• **Stochastic Starter Floor (10th %):** `{total_mc_floor:.1f} pts`\n"
+        f"• **Stochastic Starter Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`\n"
         f"• **Ensemble Delta:** `{ens_xp - base_xp:+.2f} pts` | {diff_text}"
     )
     try:
@@ -223,8 +224,8 @@ def run_comparison():
     print(f"[BASELINE MODEL] Projected Starting xP: {base_xp:.2f}")
     print(f"[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f}")
     print(f"[MPO MODEL] 3-Week Horizon Projected xP: {mpo_xp:.2f}")
-
-    send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, diffs, base_cap, ens_cap, mpo_cap)
+    
+    send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, base_ids, diffs, base_cap, ens_cap, mpo_cap)
 
 if __name__ == "__main__":
     run_comparison()
