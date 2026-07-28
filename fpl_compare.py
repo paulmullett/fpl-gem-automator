@@ -204,7 +204,8 @@ def run_comparison():
             "form": str(p.get("form", "0.0")), "total_points": p.get("total_points", 0),
             "own": str(p.get("selected_by_percent", "0.0")),
             "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
-            "est_xmins": est_mins, "xgi_90": float(p.get("creativity", 0.0) or 0.2) / 100.0
+            "est_xmins": est_mins, 
+            "xgi_90": float(p.get("expected_goal_involvements_90", 0.25) or 0.25)
         }
 
     print("Fetching live market odds adjustments...")
