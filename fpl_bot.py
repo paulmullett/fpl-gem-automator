@@ -267,7 +267,6 @@ def get_base_ev(p, weights, xmins_overrides):
     attacking_points = (xgi * mins_factor) * pos_mult * market_premium_factor
     
     # 3. Logistic Regression (Sigmoid) Appearance Points
-    # Calculates mathematically accurate probability of crossing the 60-minute threshold
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     prob_1_59 = (1.0 - prob_60)
     app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
@@ -613,7 +612,6 @@ def get_fpl_data():
         if chance in ["0", "25", "50"] and p["cost"] >= 9.0:
             trapped_equity = p["cost"] - p["selling_price"]
             
-            # Dynamic injury timeline estimation based on active flags
             if chance == "0": injury_weeks = 4
             elif chance == "25": injury_weeks = 2
             else: injury_weeks = 1
