@@ -161,10 +161,6 @@ def solve_model(players_dict, market_data, use_ensemble=False):
 
     starters = [players_dict[i] for i in valid_ids if starter_vars[i].varValue and starter_vars[i].varValue > 0.5]
     captain = next((players_dict[i] for i in valid_ids if captain_vars[i].varValue and captain_vars[i].varValue > 0.5), None)
-
-
-starters = [players_dict[i] for i in valid_ids if starter_vars[i].varValue and starter_vars[i].varValue > 0.5]
-    captain = next((players_dict[i] for i in valid_ids if captain_vars[i].varValue and captain_vars[i].varValue > 0.5), None)
     
     ev_func = (lambda s, x: get_ensemble_ev(s, x, market_data)) if use_ensemble else get_base_ev
     
