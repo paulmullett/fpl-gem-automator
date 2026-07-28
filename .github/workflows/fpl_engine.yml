@@ -1,0 +1,45 @@
+name: FPL Automated Tactical Engine & Comparison
+
+on:
+  workflow_dispatch:
+    inputs:
+      manual_trigger:
+        description: 'Select execution type'
+        required: true
+        default: 'pre_gameweek_deadline'
+        type: choice
+        options:
+          - pre_gameweek_deadline
+          - post_gameweek_review
+
+jobs:
+  run-fpl-pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pulp google-genai ddgs
+
+      - name: Run Main FPL Bot
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          MANUAL_TRIGGER: ${{ github.event.inputs.manual_trigger }}
+          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}
+        run: python fpl_bot.py
+
+      - name: Run Ensemble Comparison
+        env:
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: python fpl_compare.py
