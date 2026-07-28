@@ -169,7 +169,7 @@ def solve_model(players_dict, market_data, use_ensemble=False):
 
     return starters, captain, total_xp
 
-def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap):
+"""def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap):
     if not DISCORD_WEBHOOK_URL:
         return
     
@@ -247,6 +247,62 @@ def run_comparison():
     print(f"[MPO MODEL] 3-Week Horizon Projected xP: {mpo_xp:.2f}")
 
     send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap)
+"""
+def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap):
+    if not DISCORD_WEBHOOK_URL:
+        return
+        
+    base_starter_ids = {s["id"] for s in base_starters}
+    ens_starter_ids = {s["id"] for s in ens_starters}
+    mpo_starter_ids = {s["id"] for s in mpo_starters}
+
+    total_mc_floor = sum(mc_results[pid]["floor"] for pid in base_starter_ids if pid in mc_results)
+    total_mc_ceiling = sum(mc_results[pid]["ceiling"] for pid in base_starter_ids if pid in mc_results)
+    
+    def format_position_swaps(model_starters):
+        base_map = {s["id"]: s for s in base_starters}
+        model_map = {s["id"]: s for s in model_starters}
+        
+        out_ids = set(base_map.keys()) - set(model_map.keys())
+        in_ids = set(model_map.keys()) - set(base_map.keys())
+        
+        out_players = [base_map[pid] for pid in out_ids]
+        in_players = [model_map[pid] for pid in in_ids]
+        
+        swaps = []
+        for pos in ["GKP", "DEF", "MID", "FWD"]:
+            pos_outs = [p for p in out_players if p["pos"] == pos]
+            pos_ins = [p for p in in_players if p["pos"] == pos]
+            for o, i in zip(pos_outs, pos_ins):
+                swaps.append(f"{o['name']} ➔ {i['name']}")
+                out_players.remove(o)
+                in_players.remove(i)
+                
+        for o, i in zip(out_players, in_players):
+            swaps.append(f"{o['name']} ➔ {i['name']}")
+            
+        return swaps
+
+    ens_swaps = format_position_swaps(ens_starters)
+    mpo_swaps = format_position_swaps(mpo_starters)
+
+    ens_diff_text = "Swaps vs Base:\n" + "\n".join([f"  └ {s}" for s in ens_swaps]) if ens_swaps else "Swaps vs Base: `None (Identical XI)`"
+    mpo_diff_text = "Swaps vs Base:\n" + "\n".join([f"  └ {s}" for s in mpo_swaps]) if mpo_swaps else "Swaps vs Base: `None (Identical XI)`"
+
+    content = (
+        f"**[Master Model Audit: Odds + MPO + Monte Carlo Side-by-Side]**\n\n"
+        f"• **Baseline Model:** `{base_xp:.2f} xP` | C: `{base_cap['name'] if base_cap else 'None'}`\n"
+        f"• **Ensemble Model:** `{ens_xp:.2f} xP` | C: `{ens_cap['name'] if ens_cap else 'None'}`\n"
+        f"  {ens_diff_text}\n"
+        f"• **Multi-Period (3W) Model:** `{mpo_xp:.2f} xP` | C: `{mpo_cap['name'] if mpo_cap else 'None'}`\n"
+        f"  {mpo_diff_text}\n\n"
+        f"• **Stochastic Starter Floor (10th %):** `{total_mc_floor:.1f} pts`\n"
+        f"• **Stochastic Starter Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`"
+    )
+    try:
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
+    except Exception as e:
+        print(f"Failed to send Discord webhook: {e}")
 
 if __name__ == "__main__":
     run_comparison()
