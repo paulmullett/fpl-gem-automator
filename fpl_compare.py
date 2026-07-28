@@ -158,24 +158,34 @@ def solve_model(players_dict, market_data, use_ensemble=False):
 
     return starters, captain, total_xp
 
-def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, starters, squad_ids, diffs, base_cap, ens_cap, mpo_cap):
+def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap):
     if not DISCORD_WEBHOOK_URL:
         return
     
-    # Correctly sum Monte Carlo floor and ceiling ONLY for the starting XI starters
-    starter_ids = {s["id"] for s in starters}
-    total_mc_floor = sum(mc_results[pid]["floor"] for pid in starter_ids if pid in mc_results)
-    total_mc_ceiling = sum(mc_results[pid]["ceiling"] for pid in starter_ids if pid in mc_results)
+    base_starter_ids = {s["id"] for s in base_starters}
+    ens_starter_ids = {s["id"] for s in ens_starters}
+    mpo_starter_ids = {s["id"] for s in mpo_starters}
+
+    total_mc_floor = sum(mc_results[pid]["floor"] for pid in base_starter_ids if pid in mc_results)
+    total_mc_ceiling = sum(mc_results[pid]["ceiling"] for pid in base_starter_ids if pid in mc_results)
     
-    diff_text = f"{len(diffs)} divergent starter(s)." if diffs else "No starting XI differences."
+    # Format Starting XI lists for 1:1 comparison
+    base_names = ", ".join([s["name"] for s in base_starters])
+    ens_diffs = [s["name"] for s in ens_starters if s["id"] not in base_starter_ids]
+    mpo_diffs = [s["name"] for s in mpo_starters if s["id"] not in base_starter_ids]
+
+    ens_diff_text = f"Swaps vs Base: `{', '.join(ens_diffs)}`" if ens_diffs else "Identical to Baseline XI"
+    mpo_diff_text = f"Swaps vs Base: `{', '.join(mpo_diffs)}`" if mpo_diffs else "Identical to Baseline XI"
+
     content = (
-        f"**[Master Model Audit: Odds + MPO + Monte Carlo]**\n"
-        f"• **Baseline xP:** `{base_xp:.2f}` | Captain: `{base_cap['name'] if base_cap else 'None'}`\n"
-        f"• **Ensemble xP:** `{ens_xp:.2f}` | Captain: `{ens_cap['name'] if ens_cap else 'None'}`\n"
-        f"• **Multi-Period (3W) xP:** `{mpo_xp:.2f}` | Captain: `{mpo_cap['name'] if mpo_cap else 'None'}`\n"
+        f"**[Master Model Audit: Odds + MPO + Monte Carlo Side-by-Side]**\n\n"
+        f"• **Baseline Model:** `{base_xp:.2f} xP` | C: `{base_cap['name'] if base_cap else 'None'}`\n"
+        f"• **Ensemble Model:** `{ens_xp:.2f} xP` | C: `{ens_cap['name'] if ens_cap else 'None'}`\n"
+        f"  └ *{ens_diff_text}*\n"
+        f"• **Multi-Period (3W) Model:** `{mpo_xp:.2f} xP` | C: `{mpo_cap['name'] if mpo_cap else 'None'}`\n"
+        f"  └ *{mpo_diff_text}*\n\n"
         f"• **Stochastic Starter Floor (10th %):** `{total_mc_floor:.1f} pts`\n"
-        f"• **Stochastic Starter Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`\n"
-        f"• **Ensemble Delta:** `{ens_xp - base_xp:+.2f} pts` | {diff_text}"
+        f"• **Stochastic Starter Ceiling (90th %):** `{total_mc_ceiling:.1f} pts`"
     )
     try:
         requests.post(DISCORD_WEBHOOK_URL, json={"content": content})
@@ -218,15 +228,11 @@ def run_comparison():
     ens_starters, ens_cap, ens_xp = solve_model(players, market_data, use_ensemble=True)
     mpo_starters, mpo_cap, mpo_xp = solve_multi_period_model(players, horizons=3)
 
-    base_ids = {s["id"] for s in base_starters}
-    ens_ids = {s["id"] for s in ens_starters}
-    diffs = ens_ids.symmetric_difference(base_ids)
-
     print(f"[BASELINE MODEL] Projected Starting xP: {base_xp:.2f}")
     print(f"[ENSEMBLE MODEL] Projected Starting xP: {ens_xp:.2f}")
     print(f"[MPO MODEL] 3-Week Horizon Projected xP: {mpo_xp:.2f}")
-    
-    send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, base_ids, diffs, base_cap, ens_cap, mpo_cap)
+
+    send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap)
 
 if __name__ == "__main__":
     run_comparison()
