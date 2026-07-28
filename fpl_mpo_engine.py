@@ -1,9 +1,9 @@
 import pulp
 import math
 
-def solve_multi_period_model(players_dict, horizons=3):
+def solve_multi_period_model(players_dict, current_squad_ids=None, horizons=3):
     """
-    Solves a multi-period optimization problem across a rolling horizon of 'horizons' gameweeks.
+    Solves a multi-period optimization problem anchored to the user's actual FPL squad at t=0.
     """
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
@@ -67,6 +67,14 @@ def solve_multi_period_model(players_dict, horizons=3):
             model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
         model += pulp.lpSum([players_dict[i]["cost"] * squad[i, t] for i in valid_ids]) + bank[t] <= 100.0
+
+        # Anchor period 0 strictly to the user's actual FPL team picks
+        if t == 0 and current_squad_ids and len(current_squad_ids) == 15:
+            for i in valid_ids:
+                if i in current_squad_ids:
+                    model += squad[i, 0] == 1
+                else:
+                    model += squad[i, 0] == 0
 
         if t > 0:
             for i in valid_ids:
