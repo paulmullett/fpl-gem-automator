@@ -7,7 +7,6 @@ DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 ODDS_API_KEY = os.getenv("ODDS_API_KEY")
 
 def estimate_xmins(p):
-    # Placeholder or existing logic for estimating expected minutes
     return float(p.get("chance_of_playing_next_round", 100) or 100) * 0.9
 
 def get_market_adjustments():
@@ -23,12 +22,14 @@ def get_user_current_squad(team_id):
     return []
 
 def solve_model(players, market_data, use_ensemble=False):
+    # Retain your actual solver logic here
     starters = []
     cap = None
     xp = 38.0
     return starters, cap, xp
 
 def solve_multi_period_model(players, current_squad_ids, horizons=3):
+    # Retain your actual MPO solver logic here
     starters = []
     cap = None
     xp = 37.8
