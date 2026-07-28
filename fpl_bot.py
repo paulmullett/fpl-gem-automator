@@ -203,15 +203,11 @@ def estimate_xmins(p):
     try: cost = float(p.get("cost", 0.0))
     except: cost = 0.0
 
-    # Logarithmic Ownership Security (Peaks smoothly around 50% ownership)
     own_security = min(1.0, math.log1p(own) / math.log1p(50.0))
-    
-    # Linear Cost Security (Scales from £4.0m to £10.0m)
     cost_security = min(1.0, max(0.0, (cost - 4.0) / 6.0))
     
     raw_xmins = (own_security * 60.0) + (cost_security * 30.0)
     
-    # Apply injury chance scaling if active flag exists
     if chance == "25": raw_xmins *= 0.25
     elif chance == "50": raw_xmins *= 0.50
     elif chance == "75": raw_xmins *= 0.75
@@ -219,7 +215,6 @@ def estimate_xmins(p):
     return min(90.0, max(0.0, raw_xmins))
 
 def get_variance_penalty(xmins):
-    # Continuous variance curve based on projected playing time
     return 0.8 + (min(xmins, 90.0) / 90.0) * 0.2
 
 def get_base_ev(p, weights, xmins_overrides):
@@ -246,30 +241,30 @@ def get_base_ev(p, weights, xmins_overrides):
 
     mins_factor = xmins / 90.0
     
-    # 1. Poisson Clean Sheet Engine
-    team_xga = xgc * mins_factor
-    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
-    
-    cs_points = 0.0
-    if p["pos_id"] in [1, 2]: 
-        cs_points = cs_prob * 4.0
-    elif p["pos_id"] == 3: 
-        cs_points = cs_prob * 1.0
-        
-    # 2. Continuous Market-Priced Finisher Curve
-    market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
-    
-    # Precise Positional Weighted Attacking Event Scoring (Goals vs Assists)
-    if p["pos_id"] == 2: pos_mult = 4.2       # Defenders (Avg 6pts goal / 3pts assist)
-    elif p["pos_id"] == 3: pos_mult = 4.0     # Midfielders (Avg 5pts goal / 3pts assist)
-    else: pos_mult = 3.6                      # Forwards (Avg 4pts goal / 3pts assist)
-        
-    attacking_points = (xgi * mins_factor) * pos_mult * market_premium_factor
-    
-    # 3. Logistic Regression (Sigmoid) Appearance Points
+    # Logistic Regression (Sigmoid) Appearance Points
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     prob_1_59 = (1.0 - prob_60)
     app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
+
+    # Poisson Clean Sheet Engine (Gated by 60-min probability)
+    team_xga = xgc * mins_factor
+    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
+    
+    if p["pos_id"] in [1, 2]: 
+        cs_points = (cs_prob * 4.0) * prob_60
+    elif p["pos_id"] == 3: 
+        cs_points = (cs_prob * 1.0) * prob_60
+    else:
+        cs_points = 0.0
+        
+    # Continuous Market-Priced Finisher Curve
+    market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
+    
+    if p["pos_id"] == 2: pos_mult = 4.2       
+    elif p["pos_id"] == 3: pos_mult = 4.0     
+    else: pos_mult = 3.6                      
+        
+    attacking_points = (xgi * mins_factor) * pos_mult * market_premium_factor
     
     raw_ev = app_points + attacking_points + cs_points
     
@@ -328,7 +323,6 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
         
-        # Exponential Quadratic Rank Threat Shield
         own_pct = ownership / 100.0
         rank_threat_gravity = (ev * (own_pct ** 2) * 0.75)
             
@@ -530,12 +524,10 @@ def get_fpl_data():
 
     new_arrivals = []
     for p in players.values():
-        news_text = p["news"].lower() if p["news"] else ""
-        is_new_transfer = "joined" in news_text or "transferred" in news_text or "signed" in news_text
-        is_high_value_zero_min = (p["cost"] >= 6.0) and (p["total_points"] == 0)
-        if (is_new_transfer or is_high_value_zero_min) and p["status"] in ["a", "d"]:
-            news_msg = p["news"] if p["news"] else "New Transfer / Foreign Arrival"
-            new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: {news_msg}")
+        # Law 7 Flagging: Assesses unproven assets via point history instead of parsed news text
+        is_new_transfer = (p["total_points"] == 0 and p["cost"] >= 5.5 and p["status"] in ["a", "d"])
+        if is_new_transfer:
+            new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: Zero Baseline Data")
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
     
     squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
