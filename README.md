@@ -9,7 +9,7 @@ An advanced, institutional-grade Fantasy Premier League (FPL) modeling and autom
 * **Multi-Period Optimization (MPO) (`fpl_mpo_engine.py`):** Evaluates a rolling multi-week horizon, incorporating transfer banking economics (up to 5 free transfers) and fixture difficulty swings.
 * **Stochastic Risk Bounds (`fpl_monte_carlo.py`):** Runs Monte Carlo simulations to calculate explicit 10th percentile floors and 90th percentile ceilings for active starting lineups.
 * **Market Odds Blending (`fpl_odds_engine.py`):** Fuses baseline expectations with live bookmaker odds and short-term form metrics through an ensemble model layer.
-* **Automated Discord Audits:** Pushes comprehensive pre-gameweek audit summaries, model comparisons, and structural shift indicators directly to Discord via webhooks (`fpl_compare_discord.py`).
+* **Player to Player Comparisons to Discord (`fpl_compare_players.py`):** Pushes comprehensive pre-gameweek audit summaries, model comparisons, and structural shift indicators directly to Discord via webhooks.
 
 ## Repository Structure
 
