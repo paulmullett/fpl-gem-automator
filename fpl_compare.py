@@ -50,7 +50,6 @@ def estimate_xmins(p):
         
     return min(90.0, max(0.0, raw_xmins))
 
-# Institutional-grade Tier 1 Dynamic Translation Engine
 LEAGUE_BASE_STRENGTHS = {
     "Champions_League": 0.96,
     "Bundesliga": 0.90,
@@ -65,49 +64,34 @@ LEAGUE_BASE_STRENGTHS = {
 }
 
 def calculate_tier1_translation_factor(p):
-    """
-    Computes a multi-variable dynamic conversion coefficient combining 
-    league baseline strength, age-performance curves, and team dominance delta.
-    """
     league = p.get("source_league", "Premier_League")
     base_coef = LEAGUE_BASE_STRENGTHS.get(league, 0.75)
     
     if league == "Premier_League":
         return 1.00
         
-    # 1. Age Adaptation Curve (Younger players absorb physical intensity faster)
     try:
         age = int(p.get("age", 25))
     except:
         age = 25
         
     if age <= 22:
-        age_modifier = 1.05  # High ceiling, rapid physical adaptation
+        age_modifier = 1.05
     elif age >= 29:
-        age_modifier = 0.92  # Steeper physical adjustment cliff
+        age_modifier = 0.92
     else:
         age_modifier = 1.00
 
-    # 2. Possession / Team Dominance Adjustment
-    # If a player came from a super-dominant continental club (e.g., Bayern, PSG, Brugge), 
-    # their raw xGI volume is penalized for expected drop in team territory dominance.
     team_dominance_score = float(p.get("former_team_possession_pct", 55.0))
-    # Premier League mid-table baseline is roughly 48-50% possession
     dominance_delta = max(0.85, 1.0 - ((team_dominance_score - 50.0) / 200.0))
 
-    # 3. Positional Resilience Factor
-    # Technical creators (MID) and elite finishers (FWD) translate better than high-volume wing-backs
     pos_id = p.get("pos_id", 3)
     pos_resilience = 1.02 if pos_id in [3, 4] else 0.96
 
-    # Returning Player Exception Override
     if p.get("has_stale_pl_history") and p.get("recent_european_peak", False):
         return 0.94
 
-    # Compound Tier 1 Multiplier Formula
     final_multiplier = base_coef * age_modifier * dominance_delta * pos_resilience
-    
-    # Boundary clamp to prevent extreme mathematical distortion
     return max(0.65, min(0.98, final_multiplier))
 
 def get_base_ev(p, xmins_overrides):
@@ -130,26 +114,9 @@ def get_base_ev(p, xmins_overrides):
     
     baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
-    confidence = min(1.0, (own / 15.0) + (max(0.0, cost - cost_threshold) / 2.0))
-
-    try:
-        ep = float(p.get("ep_next", 0.0))
-        xgi = float(p.get("xgi_90", 0.0))
-        xgc = float(p.get("xgc_90", 0.0) or 1.35)
-        cost = float(p.get("cost", 0.0))
-        own = float(p.get("own", 0.0))
-    except:
-        ep, xgi, xgc, cost, own = 0.0, 0.0, 1.35, 4.0, 0.0
-
-    pos_id = p["pos_id"]
-    mins_factor = xmins / 90.0
-    
-    baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
-    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
     cost_premium = max(0.0, cost - cost_threshold)
     confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
     
-    # --- TIER 1 INSTITUTIONAL TRANSLATION CALL ---
     translation_mult = calculate_tier1_translation_factor(p)
     adjusted_xgi = xgi * translation_mult
     
@@ -162,11 +129,18 @@ def get_base_ev(p, xmins_overrides):
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
     cs_points = (cs_prob * (4.0 if pos_id in [1, 2] else (1.0 if pos_id == 3 else 0.0))) * prob_60
     
+    extra_defensive_points = 0.0
+    if pos_id == 1:
+        estimated_saves = max(1.5, (xgc * 1.4))
+        extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
+    elif pos_id == 2:
+        extra_defensive_points = 0.22 * mins_factor if cost >= 5.5 else 0.08
+    
     market_premium = 1.0 + (max(0, cost - 5.5) * 0.04)
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium
     
-    raw_ev = app_points + attacking_points + cs_points
+    raw_ev = app_points + attacking_points + cs_points + extra_defensive_points
     return (raw_ev * 0.70) + (ep * 0.30)
 
 def get_ensemble_ev(p, xmins_overrides, market_data):
@@ -246,7 +220,6 @@ def solve_model(players_dict, market_data, use_ensemble=False):
     
     ev_func = (lambda s, x: get_ensemble_ev(s, x, market_data)) if use_ensemble else get_base_ev
     
-    # Select Vice-Captain: highest expected points among starters excluding the captain
     eligible_vcs = [s for s in starters if captain and s["id"] != captain["id"]]
     vice_captain = max(eligible_vcs, key=lambda s: ev_func(s, {})) if eligible_vcs else None
 
@@ -255,6 +228,7 @@ def solve_model(players_dict, market_data, use_ensemble=False):
         total_xp += ev_func(captain, {})
 
     return starters, captain, vice_captain, total_xp
+
 def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_starters, mpo_starters, base_cap, ens_cap, mpo_cap, base_vc, ens_vc, mpo_vc):
     if not DISCORD_WEBHOOK_URL:
         return
@@ -338,7 +312,6 @@ def run_comparison():
         "xgi_90": str(p.get("expected_goal_involvements_per_90", "0.0")),
         "xgc_90": str(p.get("expected_goals_conceded_per_90", "0.0")),
         "cost_change_start": p.get("cost_change_start", 0),
-        # Tier 1 Metadata Hooks (defaults safely if not explicitly tagged)
         "source_league": p.get("source_league", "Premier_League"),
         "age": p.get("age", 25),
         "former_team_possession_pct": p.get("former_team_possession_pct", 50.0),
@@ -359,11 +332,9 @@ def run_comparison():
     ens_starters, ens_cap, ens_vc, ens_xp = solve_model(players, market_data, use_ensemble=True)
     mpo_starters, mpo_cap, mpo_xp = solve_multi_period_model(players, current_squad_ids=user_squad_ids, horizons=3)
     
-    # Derive MPO Vice-Captain programmatically
     mpo_eligible_vcs = [s for s in mpo_starters if mpo_cap and s["id"] != mpo_cap["id"]]
     mpo_vc = max(mpo_eligible_vcs, key=lambda s: get_base_ev(s, {})) if mpo_eligible_vcs else None
 
-    # Pass vice-captains into send_to_discord
     send_to_discord(
         base_xp, ens_xp, mpo_xp, mc_results, 
         base_starters, ens_starters, mpo_starters, 
