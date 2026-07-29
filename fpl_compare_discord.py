@@ -114,21 +114,26 @@ def evaluate_player_models(p):
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
     cs_points = (cs_prob * (4.0 if pos_id in [1, 2] else (1.0 if pos_id == 3 else 0.0))) * prob_60
     
+    # --- DEFCON & GOALKEEPER SAVE/BPS MODELLING ---
+    extra_defensive_points = 0.0
+    if pos_id == 1:
+        # Goalkeeper save volume estimation (factoring in save-point baselines)
+        estimated_saves = max(1.5, (p["xgc_90"] * 1.4))
+        extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
+    elif pos_id == 2:
+        # Centre-back / Full-back defensive contribution & BPS weighting
+        extra_defensive_points = 0.22 * mins_factor if p["cost"] >= 5.5 else 0.08
+    
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     market_premium = 1.0 + (max(0, p["cost"] - 5.5) * 0.04)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium
     
-    raw_ev = app_points + attacking_points + cs_points
+    raw_ev = app_points + attacking_points + cs_points + extra_defensive_points
     ep = p["ep_next"]
     
     # Model Variations Calculation
-    # 1. Baseline Model (70% analytical model, 30% FPL EP)
     base_ev = (raw_ev * 0.70) + (ep * 0.30)
-    
-    # 2. Ensemble Model (Aggressive weighting & fixture variance penalty)
     ensemble_ev = (raw_ev * 0.85) + (ep * 0.15) * 0.95
-    
-    # 3. Multi-Period Model (Multi-week rolling stability scalar)
     multi_period_ev = base_ev * 0.92 + (ep * 0.08)
     
     return round(base_ev, 2), round(ensemble_ev, 2), round(multi_period_ev, 2), round(xmins, 1)
