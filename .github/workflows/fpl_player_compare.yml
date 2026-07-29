@@ -34,4 +34,4 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           PLAYER_A: ${{ github.event.inputs.player_a }}
           PLAYER_B: ${{ github.event.inputs.player_b }}
-        run: python fpl_compare_discord.py
+        run: python fpl_compare_players.py
