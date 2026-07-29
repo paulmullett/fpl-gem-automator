@@ -1,6 +1,6 @@
 # FPL Optimization & Master Audit Pipeline
 
-An advanced, institutional-grade Fantasy Premier League (FPL) modeling and automation pipeline. This project utilizes Mixed-Integer Linear Programming (MILP), multi-period optimization, Monte Carlo stochastic simulations, and live bookmaker odds integration to maximize expected points (xP) and long-term squad value.
+An advanced, institutional-grade Fantasy Premier League (FPL) modeling and automation pipeline. This project utilizes Mixed-Integer Linear Programming (MILP), multi-period optimization, Monte Carlo stochastic simulations, and live bookmaker odds integration to maximize expected points (xP) and long-term squad value. Two tools, one which outputs post-gameweek and/or pre-gameweek analysis and team suggestions to Discord (via Automations and a dedicated drop-down), and a second tool with text inputs for player-to-player comparisons.
 
 ## Core Architecture & Features
 
@@ -15,18 +15,12 @@ An advanced, institutional-grade Fantasy Premier League (FPL) modeling and autom
 
 ```text
 ├── .github/workflows/         # Automated GitHub Action pipelines
-│   ├── ensemble.yml
-│   ├── fpl_automation.yml
-│   ├── fpl_compare.yml
 │   ├── fpl_engine.yml
 │   ├── fpl_player_compare.yml
-│   └── test_auth.yml
 ├── fpl_bot.py                 # Bot integration script
 ├── fpl_compare.py             # Master orchestration script
-├── fpl_compare_discord.py     # Discord webhook formatting and transmission
-├── fpl_ensemble.py            # Ensemble model logic
+├── fpl_compare_players.py     # For player comparison tool
 ├── fpl_monte_carlo.py         # Stochastic risk simulation engine
 ├── fpl_mpo_engine.py          # Multi-period horizon optimization solver
 ├── fpl_odds_engine.py         # Market odds data ingestion and adjustment
-├── fpl_state.json             # State tracking storage
-└── test_auth.py               # Authentication testing script
+└── fpl_state.json             # State tracking storage
