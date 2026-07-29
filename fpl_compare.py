@@ -16,7 +16,13 @@ if not FPL_TEAM_ID:
     sys.exit(1)
 
 def get_user_current_squad(team_id):
-    url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/1/picks/"
+    
+    # Dynamic gameweek resolution pattern
+    current_gw = next(
+        (event["id"] for event in bootstrap_data["events"] if event.get("is_current")),
+        1
+    )
+    url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/{current_gw}/picks/"
     try:
         resp = requests.get(url, headers={"User-Agent": "FPL-Compare-Script/1.0"}, timeout=5)
         if resp.status_code == 200:
