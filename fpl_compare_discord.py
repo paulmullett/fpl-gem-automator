@@ -76,12 +76,25 @@ def evaluate_single_player(p):
 def main():
     players = get_bootstrap_players()
     
-    p1 = next((p for p in players.values() if PLAYER_A.lower() in p["name"].lower() or PLAYER_A.lower() in p["full_name"].lower()), None)
-    p2 = next((p for p in players.values() if PLAYER_B.lower() in p["name"].lower() or PLAYER_B.lower() in p["full_name"].lower()), None)
+    # Robust search helper handling case and partial name matches
+    def find_player(search_term):
+        term = search_term.lower().strip()
+        for p in players.values():
+            if term in p["name"].lower() or term in p["full_name"].lower():
+                return p
+        return None
+
+    p1 = find_player(PLAYER_A)
+    p2 = find_player(PLAYER_B)
     
     if not p1 or not p2:
-        error_msg = f"Comparison Error: Could not resolve players. Found A: {p1['name'] if p1 else 'None'}, Found B: {p2['name'] if p2 else 'None'}"
+        missing = []
+        if not p1: missing.append(f"Player A ('{PLAYER_A}')")
+        if not p2: missing.append(f"Player B ('{PLAYER_B}')")
+        
+        error_msg = f"Comparison Error: Could not resolve {' and '.join(missing)}. Check spelling or use the FPL web name."
         requests.post(DISCORD_WEBHOOK_URL, json={"content": error_msg})
+        print(error_msg)
         sys.exit(1)
 
     ev1, xmins1 = evaluate_single_player(p1)
