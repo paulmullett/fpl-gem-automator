@@ -1,0 +1,92 @@
+name: Validation - FPL Automations
+
+on:
+  workflow_dispatch:
+    inputs:
+      run_player_compare:
+        description: 'Run player head-to-head comparison'
+        required: false
+        default: 'true'
+      run_main_pre:
+        description: 'Run main pipeline (pre_gameweek_deadline)'
+        required: false
+        default: 'true'
+      run_main_post:
+        description: 'Run main pipeline (post_gameweek_review)'
+        required: false
+        default: 'true'
+
+jobs:
+  run-validation:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests pulp google-genai ddgs scipy numpy
+
+      - name: Prepare outputs dir
+        run: mkdir -p outputs
+
+      - name: Run Player Comparison (Haaland vs Ekitike)
+        if: ${{ github.event.inputs.run_player_compare == 'true' }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PLAYER_A: Haaland
+          PLAYER_B: Ekitike
+        run: |
+          echo "Running fpl_compare_players.py (PLAYER_A=Haaland, PLAYER_B=Ekitike)"
+          python fpl_compare_players.py > outputs/compare_players.txt 2>&1 || true
+          echo "Exit code: $?" >> outputs/compare_players.txt || true
+
+      - name: Run Main Pipeline (pre_gameweek_deadline)
+        if: ${{ github.event.inputs.run_main_pre == 'true' }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          MANUAL_TRIGGER: pre_gameweek_deadline
+          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          echo "Running fpl_bot.py (pre_gameweek_deadline)"
+          python fpl_bot.py > outputs/bot_pre.txt 2>&1 || true
+          echo "Exit code: $?" >> outputs/bot_pre.txt || true
+
+      - name: Run Main Pipeline (post_gameweek_review)
+        if: ${{ github.event.inputs.run_main_post == 'true' }}
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          MANUAL_TRIGGER: post_gameweek_review
+          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          echo "Running fpl_bot.py (post_gameweek_review)"
+          python fpl_bot.py > outputs/bot_post.txt 2>&1 || true
+          echo "Exit code: $?" >> outputs/bot_post.txt || true
+
+      - name: Run Ensemble Comparison (optional)
+        env:
+          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+        run: |
+          echo "Running fpl_compare.py (ensemble/compare)"
+          python fpl_compare.py > outputs/compare_ensemble.txt 2>&1 || true
+
+      - name: Upload outputs
+        uses: actions/upload-artifact@v4
+        with:
+          name: fpl-validation-outputs
+          path: outputs/
