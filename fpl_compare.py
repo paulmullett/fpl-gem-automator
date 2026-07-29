@@ -50,33 +50,65 @@ def estimate_xmins(p):
         
     return min(90.0, max(0.0, raw_xmins))
 
-# Tiered empirical translation coefficients based on source competition
-LEAGUE_TRANSLATION_FACTORS = {
+# Institutional-grade Tier 1 Dynamic Translation Engine
+LEAGUE_BASE_STRENGTHS = {
+    "Champions_League": 0.96,
+    "Bundesliga": 0.90,
+    "Serie_A": 0.88,
+    "La_Liga": 0.89,
+    "Ligue_1": 0.84,
+    "Eredivisie": 0.79,
+    "Pro_League": 0.77,
+    "Championship": 0.87,
     "Premier_League": 1.00,
-    "Champions_League": 0.95, 
-    "Bundesliga": 0.88,
-    "Serie_A": 0.85,
-    "La_Liga": 0.86,
-    "Ligue_1": 0.82,
-    "Eredivisie": 0.78,
-    "Pro_League": 0.76,      # e.g., Belgian Pro League (Club Brugge benchmark)
-    "Championship": 0.85,
-    "Other_Foreign": 0.70
+    "Other_Foreign": 0.72
 }
 
-def get_smart_translation_multiplier(p):
+def calculate_tier1_translation_factor(p):
     """
-    Evaluates league tier and applies the 'Returning Player Exception' 
-    if an asset had a stale/failed early PL stint but exploded in Europe since.
+    Computes a multi-variable dynamic conversion coefficient combining 
+    league baseline strength, age-performance curves, and team dominance delta.
     """
     league = p.get("source_league", "Premier_League")
+    base_coef = LEAGUE_BASE_STRENGTHS.get(league, 0.75)
     
-    # Exception check: If they have old, low-minute PL history (like early-career Tzolis) 
-    # but recent elite European/Champions League output, override the stale penalty.
-    if p.get("has_stale_pl_history") and p.get("recent_european_peak", False):
-        return 0.92  # Gentle adjustment reflecting growth, avoiding the harsh rookie penalty
+    if league == "Premier_League":
+        return 1.00
         
-    return LEAGUE_TRANSLATION_FACTORS.get(league, 0.75)
+    # 1. Age Adaptation Curve (Younger players absorb physical intensity faster)
+    try:
+        age = int(p.get("age", 25))
+    except:
+        age = 25
+        
+    if age <= 22:
+        age_modifier = 1.05  # High ceiling, rapid physical adaptation
+    elif age >= 29:
+        age_modifier = 0.92  # Steeper physical adjustment cliff
+    else:
+        age_modifier = 1.00
+
+    # 2. Possession / Team Dominance Adjustment
+    # If a player came from a super-dominant continental club (e.g., Bayern, PSG, Brugge), 
+    # their raw xGI volume is penalized for expected drop in team territory dominance.
+    team_dominance_score = float(p.get("former_team_possession_pct", 55.0))
+    # Premier League mid-table baseline is roughly 48-50% possession
+    dominance_delta = max(0.85, 1.0 - ((team_dominance_score - 50.0) / 200.0))
+
+    # 3. Positional Resilience Factor
+    # Technical creators (MID) and elite finishers (FWD) translate better than high-volume wing-backs
+    pos_id = p.get("pos_id", 3)
+    pos_resilience = 1.02 if pos_id in [3, 4] else 0.96
+
+    # Returning Player Exception Override
+    if p.get("has_stale_pl_history") and p.get("recent_european_peak", False):
+        return 0.94
+
+    # Compound Tier 1 Multiplier Formula
+    final_multiplier = base_coef * age_modifier * dominance_delta * pos_resilience
+    
+    # Boundary clamp to prevent extreme mathematical distortion
+    return max(0.65, min(0.98, final_multiplier))
 
 def get_base_ev(p, xmins_overrides):
     pid_str = str(p["id"])
@@ -114,10 +146,11 @@ def get_base_ev(p, xmins_overrides):
     
     baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
-    confidence = min(1.0, (own / 15.0) + (max(0.0, cost - cost_threshold) / 2.0))
+    cost_premium = max(0.0, cost - cost_threshold)
+    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
     
-    # --- UPGRADED TRANSLATION LOGIC ---
-    translation_mult = get_smart_translation_multiplier(p)
+    # --- TIER 1 INSTITUTIONAL TRANSLATION CALL ---
+    translation_mult = calculate_tier1_translation_factor(p)
     adjusted_xgi = xgi * translation_mult
     
     shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
@@ -295,16 +328,23 @@ def run_comparison():
     for p in data["elements"]:
         est_mins = estimate_xmins(p)
         players[p["id"]] = {
-            "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
-            "team_id": p["team"], "pos": element_types.get(p["element_type"], "UNK"),
-            "pos_id": p["element_type"], "cost": p["now_cost"] / 10.0,
-            "status": p["status"], "news": p["news"], "ep_next": str(p.get("ep_next", "0.0")),
-            "form": str(p.get("form", "0.0")), "total_points": p.get("total_points", 0),
-            "own": str(p.get("selected_by_percent", "0.0")),
-            "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
-            "est_xmins": est_mins, 
-            "xgi_90": float(p.get("expected_goal_involvements_90", 0.25) or 0.25)
-        }
+        "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
+        "team_id": p["team"], "pos": element_types.get(p["element_type"], "UNK"),
+        "pos_id": p["element_type"], "cost": p["now_cost"] / 10.0,
+        "status": p["status"], "news": p["news"], "ep_next": str(p.get("ep_next", "0.0")),
+        "total_points": p.get("total_points", 0), "form": str(p.get("form", "0.0")),
+        "own": str(p.get("selected_by_percent", "0.0")),
+        "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
+        "xgi_90": str(p.get("expected_goal_involvements_per_90", "0.0")),
+        "xgc_90": str(p.get("expected_goals_conceded_per_90", "0.0")),
+        "cost_change_start": p.get("cost_change_start", 0),
+        # Tier 1 Metadata Hooks (defaults safely if not explicitly tagged)
+        "source_league": p.get("source_league", "Premier_League"),
+        "age": p.get("age", 25),
+        "former_team_possession_pct": p.get("former_team_possession_pct", 50.0),
+        "has_stale_pl_history": p.get("has_stale_pl_history", False),
+        "recent_european_peak": p.get("recent_european_peak", False)
+    }
 
     print("Fetching live market odds adjustments...")
     market_data = get_market_adjustments()
