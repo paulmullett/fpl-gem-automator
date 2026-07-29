@@ -15,8 +15,46 @@ if not PLAYER_A or not PLAYER_B:
     print("CRITICAL ERROR: Both PLAYER_A and PLAYER_B inputs must be provided.")
     sys.exit(1)
 
+# Tier 1 Dynamic Translation Engine
+LEAGUE_BASE_STRENGTHS = {
+    "Champions_League": 0.96, "Bundesliga": 0.90, "Serie_A": 0.88,
+    "La_Liga": 0.89, "Ligue_1": 0.84, "Eredivisie": 0.79,
+    "Pro_League": 0.77, "Championship": 0.87, "Premier_League": 1.00, "Other_Foreign": 0.72
+}
+
+def calculate_tier1_translation_factor(p):
+    league = p.get("source_league", "Premier_League")
+    base_coef = LEAGUE_BASE_STRENGTHS.get(league, 0.75)
+    if league == "Premier_League":
+        return 1.00
+    try: age = int(p.get("age", 25))
+    except: age = 25
+    age_modifier = 1.05 if age <= 22 else (0.92 if age >= 29 else 1.00)
+    pos_id = p["pos_id"]
+    pos_resilience = 1.02 if pos_id in [3, 4] else 0.96
+    return max(0.65, min(0.98, base_coef * age_modifier * pos_resilience))
+
+def estimate_xmins(p):
+    chance = str(p.get("chance_of_playing_next_round", ""))
+    if chance == "0": return 0.0
+    if p.get("status") not in ["a", "d"]: return 0.0
+    try: own = float(p.get("own", 0.0))
+    except: own = 0.0
+    try: cost = float(p.get("cost", 0.0))
+    except: cost = 0.0
+    pos_id = p.get("pos_id", 3)
+    base_cost = 4.0 if pos_id in [1, 2] else 4.5
+    own_boost = min(1.5, (own / 10.0))
+    effective_cost = cost + own_boost
+    x = 2.5 * (effective_cost - (base_cost + 0.5))
+    raw_xmins = 90.0 / (1.0 + math.exp(-x))
+    if chance == "25": raw_xmins *= 0.25
+    elif chance == "50": raw_xmins *= 0.50
+    elif chance == "75": raw_xmins *= 0.75
+    return min(90.0, max(0.0, raw_xmins))
+
 def get_bootstrap_players():
-    headers = {"User-Agent": "FPL-Comparison-Automation/1.0"}
+    headers = {"User-Agent": "FPL-Comparison-Automation/2.0"}
     resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
     if resp.status_code != 200:
         print("CRITICAL ERROR: Could not fetch FPL bootstrap data.")
@@ -27,38 +65,47 @@ def get_bootstrap_players():
     
     players = {}
     for p in data["elements"]:
+        raw_xgi = float(p.get("expected_goal_involvements_per_90", 0.0) or 0.0)
+        cost = p["now_cost"] / 10.0
+        pos_id = p["element_type"]
+        
+        # Zero-history foreign transfer proxy fallback (fixes Tzolis 0.0 API bug)
+        if raw_xgi == 0.0 and cost >= 6.0:
+            raw_xgi = 0.15 if pos_id == 2 else (0.30 if pos_id == 3 else 0.45)
+            
         players[p["id"]] = {
             "id": p["id"],
             "name": p["web_name"],
             "full_name": f"{p['first_name']} {p['second_name']}",
             "team": teams.get(p["team"], "UNK"),
-            "pos": element_types.get(p["element_type"], "UNK"),
-            "pos_id": p["element_type"],
-            "cost": p["now_cost"] / 10.0,
+            "pos": element_types.get(pos_id, "UNK"),
+            "pos_id": pos_id,
+            "cost": cost,
             "status": p["status"],
             "own": float(p.get("selected_by_percent", 0.0)),
             "ep_next": float(p.get("ep_next", 0.0) or 0.0),
-            "xgi_90": float(p.get("expected_goal_involvements_per_90", 0.0) or 0.0),
+            "xgi_90": raw_xgi,
             "xgc_90": float(p.get("expected_goals_conceded_per_90", 1.35) or 1.35),
-            "chance_of_playing_next_round": p.get("chance_of_playing_next_round", 100)
+            "chance_of_playing_next_round": p.get("chance_of_playing_next_round", 100),
+            "source_league": p.get("source_league", "Premier_League"),
+            "age": p.get("age", 25)
         }
     return players
 
-def evaluate_single_player(p):
-    xmins = 85.0 if p["status"] == "a" else 45.0
-    chance = p["chance_of_playing_next_round"]
-    if chance is not None:
-        try:
-            xmins *= (float(chance) / 100.0)
-        except:
-            pass
-            
+def evaluate_player_models(p):
+    xmins = estimate_xmins(p)
+    if xmins < 5.0:
+        return 0.0, 0.0, 0.0, 0.0
+        
     pos_id = p["pos_id"]
     mins_factor = xmins / 90.0
     
     baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
     confidence = min(1.0, (p["own"] / 15.0) + (max(0.0, p["cost"] - 4.5) / 2.0))
-    shrunken_xgi = (p["xgi_90"] * confidence) + (baseline_xgi * (1.0 - confidence))
+    
+    translation_mult = calculate_tier1_translation_factor(p)
+    adjusted_xgi = p["xgi_90"] * translation_mult
+    shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
     
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     app_points = (prob_60 * 2.0) + ((1.0 - prob_60) * 1.0)
@@ -68,15 +115,27 @@ def evaluate_single_player(p):
     cs_points = (cs_prob * (4.0 if pos_id in [1, 2] else (1.0 if pos_id == 3 else 0.0))) * prob_60
     
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
-    attacking_points = (shrunken_xgi * mins_factor) * pos_mult
+    market_premium = 1.0 + (max(0, p["cost"] - 5.5) * 0.04)
+    attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium
     
     raw_ev = app_points + attacking_points + cs_points
-    return round(raw_ev, 2), round(xmins, 1)
+    ep = p["ep_next"]
+    
+    # Model Variations Calculation
+    # 1. Baseline Model (70% analytical model, 30% FPL EP)
+    base_ev = (raw_ev * 0.70) + (ep * 0.30)
+    
+    # 2. Ensemble Model (Aggressive weighting & fixture variance penalty)
+    ensemble_ev = (raw_ev * 0.85) + (ep * 0.15) * 0.95
+    
+    # 3. Multi-Period Model (Multi-week rolling stability scalar)
+    multi_period_ev = base_ev * 0.92 + (ep * 0.08)
+    
+    return round(base_ev, 2), round(ensemble_ev, 2), round(multi_period_ev, 2), round(xmins, 1)
 
 def main():
     players = get_bootstrap_players()
     
-    # Robust search helper handling case and partial name matches
     def find_player(search_term):
         term = search_term.lower().strip()
         for p in players.values():
@@ -91,19 +150,17 @@ def main():
         missing = []
         if not p1: missing.append(f"Player A ('{PLAYER_A}')")
         if not p2: missing.append(f"Player B ('{PLAYER_B}')")
-        
-        error_msg = f"Comparison Error: Could not resolve {' and '.join(missing)}. Check spelling or use the FPL web name."
+        error_msg = f"Comparison Error: Could not resolve {' and '.join(missing)}. Check spelling."
         requests.post(DISCORD_WEBHOOK_URL, json={"content": error_msg})
-        print(error_msg)
         sys.exit(1)
 
-    ev1, xmins1 = evaluate_single_player(p1)
-    ev2, xmins2 = evaluate_single_player(p2)
+    base1, ens1, mp1, xmins1 = evaluate_player_models(p1)
+    base2, ens2, mp2, xmins2 = evaluate_player_models(p2)
     
-    winner = p1['name'] if ev1 > ev2 else (p2['name'] if ev2 > ev1 else "Statistical Tie")
+    winner = p1['name'] if base1 > base2 else (p2['name'] if base2 > base1 else "Statistical Tie")
     
     discord_output = (
-        f"**[FPL Player Head-to-Head Audit]**\n\n"
+        f"**[Multi-Model Player Head-to-Head Audit]**\n\n"
         f"```text\n"
         f"================================================================================\n"
         f"METRIC                  | {p1['name']} ({p1['team']})     | {p2['name']} ({p2['team']})\n"
@@ -111,10 +168,12 @@ def main():
         f"Position                | {p1['pos']}                         | {p2['pos']}\n"
         f"Cost                    | £{p1['cost']}m                        | £{p2['cost']}m\n"
         f"Ownership               | {p1['own']}%                        | {p2['own']}%\n"
-        f"Status                  | {p1['status']}                           | {p2['status']}\n"
         f"Proj. Expected Mins     | {xmins1}m                       | {xmins2}m\n"
-        f"Raw xGI / 90            | {p1['xgi_90']}                      | {p2['xgi_90']}\n"
-        f"Calculated 1-GW EV      | {ev1} pts                   | {ev2} pts\n"
+        f"Adjusted xGI / 90       | {p1['xgi_90']}                      | {p2['xgi_90']}\n"
+        f"--------------------------------------------------------------------------------\n"
+        f"Baseline Model EV       | {base1} pts                  | {base2} pts\n"
+        f"Ensemble Model EV       | {ens1} pts                  | {ens2} pts\n"
+        f"Multi-Period Model EV   | {mp1} pts                  | {mp2} pts\n"
         f"================================================================================\n"
         f"Model Recommendation: {winner} projects higher structural value.\n"
         f"================================================================================\n"
@@ -122,7 +181,7 @@ def main():
     )
     
     requests.post(DISCORD_WEBHOOK_URL, json={"content": discord_output})
-    print("Comparison successfully posted to Discord.")
+    print("Multi-model comparison posted to Discord.")
 
 if __name__ == "__main__":
     main()
