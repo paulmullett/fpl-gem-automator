@@ -1,0 +1,37 @@
+name: FPL Player Comparison Tool
+
+on:
+  workflow_dispatch:
+    inputs:
+      player_a:
+        description: 'First player name (e.g., Tzolis)'
+        required: true
+        default: 'Haaland'
+        type: string
+      player_b:
+        description: 'Second player name (e.g., Estêvão)'
+        required: true
+        default: 'Isak'
+        type: string
+
+jobs:
+  run-comparison:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install Dependencies
+        run: pip install requests pulp
+
+      - name: Execute Comparison Script
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          PLAYER_A: ${{ github.event.inputs.player_a }}
+          PLAYER_B: ${{ github.event.inputs.player_b }}
+        run: python fpl_compare_discord.py
