@@ -265,8 +265,9 @@ def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_star
     ens_swaps = format_position_swaps(ens_starters)
     mpo_swaps = format_position_swaps(mpo_starters)
 
-    ens_diff_text = "Swaps vs Base:\n" + "\n".join([f"  └ {s}" for s in ens_swaps]) if ens_swaps else "Swaps vs Base: `None (Identical XI)`"
-    mpo_diff_text = "Swaps vs Base:\n" + "\n".join([f"  └ {s}" for s in mpo_swaps]) if mpo_swaps else "Swaps vs Base: `None (Identical XI)`"
+    # --- ADDED EXPLICIT MODEL INDICATORS ---
+    ens_diff_text = "Swaps vs Base `[Odds/Market Shift]`:\n" + "\n".join([f"  └ {s}" for s in ens_swaps]) if ens_swaps else "Swaps vs Base `[Odds/Market Shift]`: `None (Identical XI)`"
+    mpo_diff_text = "Swaps vs Base `[3W Horizon / Fixture Shift]`:\n" + "\n".join([f"  └ {s}" for s in mpo_swaps]) if mpo_swaps else "Swaps vs Base `[3W Horizon / Fixture Shift]`: `None (Identical XI)`"
 
     base_c_str = f"C: `{base_cap['name']}` | V: `{base_vc['name']}`" if base_cap and base_vc else "None"
     ens_c_str = f"C: `{ens_cap['name']}` | V: `{ens_vc['name']}`" if ens_cap and ens_vc else "None"
