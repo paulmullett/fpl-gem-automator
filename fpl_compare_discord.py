@@ -162,6 +162,10 @@ def main():
     base1, ens1, mp1, xmins1 = evaluate_player_models(p1)
     base2, ens2, mp2, xmins2 = evaluate_player_models(p2)
     
+    # --- DROP THE TWO LINES HERE ---
+    val_ratio1 = round(base1 / p1['cost'], 2)
+    val_ratio2 = round(base2 / p2['cost'], 2)
+    
     winner = p1['name'] if base1 > base2 else (p2['name'] if base2 > base1 else "Statistical Tie")
     
     discord_output = (
@@ -179,6 +183,8 @@ def main():
         f"Baseline Model EV       | {base1} pts                  | {base2} pts\n"
         f"Ensemble Model EV       | {ens1} pts                  | {ens2} pts\n"
         f"Multi-Period Model EV   | {mp1} pts                  | {mp2} pts\n"
+        # --- ADD THE NEW ROW TO THE TABLE TEMPLATE HERE ---
+        f"Value Ratio (EV / £m)   | {val_ratio1} pts/£m              | {val_ratio2} pts/£m\n"
         f"================================================================================\n"
         f"Model Recommendation: {winner} projects higher structural value.\n"
         f"================================================================================\n"
