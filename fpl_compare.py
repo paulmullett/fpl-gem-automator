@@ -8,6 +8,9 @@ from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
 from fpl_monte_carlo import run_monte_carlo_simulations
 
+# combined functions
+from fpl_funcs import estimate_xmins
+
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
@@ -32,29 +35,7 @@ def get_user_current_squad(team_id):
         print(f"Could not fetch user picks for team {team_id}: {e}")
     return []
 
-def estimate_xmins(p):
-    chance = str(p.get("chance_of_playing_next_round", ""))
-    if chance == "0" or p.get("status") not in ["a", "d"]:
-        return 0.0
-    try:
-        own = float(p.get("own", 0.0))
-        cost = float(p.get("cost", 0.0))
-    except:
-        own, cost = 0.0, 4.0
-
-    pos_id = p.get("pos_id", 3)
-    base_cost = 4.0 if pos_id in [1, 2] else 4.5
-    own_boost = min(1.5, (own / 10.0))
-    effective_cost = cost + own_boost
-    
-    x = 2.5 * (effective_cost - (base_cost + 0.5))
-    raw_xmins = 90.0 / (1.0 + math.exp(-x))
-    
-    if chance == "25": raw_xmins *= 0.25
-    elif chance == "50": raw_xmins *= 0.50
-    elif chance == "75": raw_xmins *= 0.75
-        
-    return min(90.0, max(0.0, raw_xmins))
+# xmins Moved to fpl_funcs.py
 
 LEAGUE_BASE_STRENGTHS = {
     "Champions_League": 0.96,
