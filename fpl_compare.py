@@ -9,7 +9,10 @@ from fpl_mpo_engine import solve_multi_period_model
 from fpl_monte_carlo import run_monte_carlo_simulations
 
 # combined functions
-from fpl_funcs import estimate_xmins
+from fpl_funcs import (
+    estimate_xmins, 
+    calculate_tier1_translation_factor
+)
 
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -37,49 +40,7 @@ def get_user_current_squad(team_id):
 
 # xmins Moved to fpl_funcs.py
 
-LEAGUE_BASE_STRENGTHS = {
-    "Champions_League": 0.96,
-    "Bundesliga": 0.90,
-    "Serie_A": 0.88,
-    "La_Liga": 0.89,
-    "Ligue_1": 0.84,
-    "Eredivisie": 0.79,
-    "Pro_League": 0.77,
-    "Championship": 0.87,
-    "Premier_League": 1.00,
-    "Other_Foreign": 0.72
-}
-
-def calculate_tier1_translation_factor(p):
-    league = p.get("source_league", "Premier_League")
-    base_coef = LEAGUE_BASE_STRENGTHS.get(league, 0.75)
-    
-    if league == "Premier_League":
-        return 1.00
-        
-    try:
-        age = int(p.get("age", 25))
-    except:
-        age = 25
-        
-    if age <= 22:
-        age_modifier = 1.05
-    elif age >= 29:
-        age_modifier = 0.92
-    else:
-        age_modifier = 1.00
-
-    team_dominance_score = float(p.get("former_team_possession_pct", 55.0))
-    dominance_delta = max(0.85, 1.0 - ((team_dominance_score - 50.0) / 200.0))
-
-    pos_id = p.get("pos_id", 3)
-    pos_resilience = 1.02 if pos_id in [3, 4] else 0.96
-
-    if p.get("has_stale_pl_history") and p.get("recent_european_peak", False):
-        return 0.94
-
-    final_multiplier = base_coef * age_modifier * dominance_delta * pos_resilience
-    return max(0.65, min(0.98, final_multiplier))
+# league translations moved to fpl_funcs.py
 
 def get_base_ev(p, xmins_overrides):
     pid_str = str(p["id"])
