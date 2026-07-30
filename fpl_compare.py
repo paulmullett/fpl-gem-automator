@@ -15,7 +15,15 @@ from fpl_funcs import (
     get_gameweek_state
 )
 
-# Resolve gameweek targets
+# 1. Fetch the master FPL data payload FIRST
+try:
+    resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10)
+    bootstrap_data = resp.json()
+except Exception as e:
+    print(f"Failed to fetch FPL data: {e}")
+    exit(1)
+
+# 2. Now you can resolve gameweek targets because bootstrap_data exists
 active_gw, target_gw = get_gameweek_state(bootstrap_data)
 
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
@@ -243,13 +251,13 @@ def run_comparison():
     if resp.status_code != 200:
         print("CRITICAL ERROR: Failed to reach FPL API.")
         sys.exit(1)
-    data = resp.json()
+    bootstrap_data = resp.json()
 
-    teams = {t["id"]: t["short_name"] for t in data["teams"]}
-    element_types = {e["id"]: e["singular_name_short"] for e in data["element_types"]}
+    teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
+    element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
 
     players = {}
-    for p in data["elements"]:
+    for p in bootstrap_data["elements"]:
         est_mins = estimate_xmins(p)
         players[p["id"]] = {
         "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
