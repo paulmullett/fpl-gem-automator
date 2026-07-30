@@ -95,3 +95,15 @@ def calculate_tier1_translation_factor(p):
 
     final_multiplier = base_coef * age_modifier * xg_scaling
     return max(0.65, min(0.98, final_multiplier))
+
+# Gameweek state
+
+def get_gameweek_state(bootstrap_data):
+    """Returns (active_gw, target_gw) based on current FPL API state."""
+    current_gw_id = next((e["id"] for e in bootstrap_data["events"] if e.get("is_current")), None)
+    next_gw_id = next((e["id"] for e in bootstrap_data["events"] if e.get("is_next")), None)
+    
+    target_gw = next_gw_id or current_gw_id or 1
+    active_gw = current_gw_id or (target_gw if target_gw > 1 else 1)
+    
+    return active_gw, target_gw
