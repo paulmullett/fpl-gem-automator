@@ -1,4 +1,4 @@
-"Combined re-used functions and operations" 
+#Combined re-used functions and operations
 import math
 
 def estimate_xmins(p):
