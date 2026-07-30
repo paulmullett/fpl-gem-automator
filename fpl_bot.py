@@ -8,7 +8,13 @@ from google import genai
 from google.genai import types
 from ddgs import DDGS
 # combined functions
-from fpl_funcs import estimate_xmins
+from fpl_funcs import (
+    estimate_xmins, 
+    get_gameweek_state
+)
+
+# Resolve gameweek targets
+active_gw, target_gw = get_gameweek_state(bootstrap_data)
 
 # 1. Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -445,7 +451,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     return starters, sorted_bench, cap, vice
 
 # 6. Main Data Pipeline & Integration
-def get_fpl_data():
+def get_fpl_data(target_gw,active_gw):
     headers = {"User-Agent": "FPL-Auto-Script/13.0"}
     state = load_state()
     xmins_overrides = state.get("xmins_overrides", {})
@@ -463,11 +469,6 @@ def get_fpl_data():
         
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
-    
-    current_gw = next((e for e in bootstrap_data["events"] if e.get("is_current")), None)
-    next_gw = next((e for e in bootstrap_data["events"] if e.get("is_next")), None)
-    target_gw = next_gw['id'] if next_gw else (current_gw['id'] if current_gw else 1)
-    active_gw = current_gw['id'] if current_gw else (target_gw if target_gw > 1 else 1)
     
     state = recalibrate_model(state, headers, active_gw)
     state["last_updated_gw"] = target_gw
