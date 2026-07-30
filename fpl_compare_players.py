@@ -4,7 +4,10 @@ import requests
 import math
 
 # combined functions
-from fpl_funcs import estimate_xmins
+from fpl_funcs import (
+    estimate_xmins, 
+    calculate_tier1_translation_factor
+)
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 PLAYER_A = os.environ.get("PLAYER_A", "").strip()
@@ -19,23 +22,7 @@ if not PLAYER_A or not PLAYER_B:
     sys.exit(1)
 
 # Tier 1 Dynamic Translation Engine
-LEAGUE_BASE_STRENGTHS = {
-    "Champions_League": 0.96, "Bundesliga": 0.90, "Serie_A": 0.88,
-    "La_Liga": 0.89, "Ligue_1": 0.84, "Eredivisie": 0.79,
-    "Pro_League": 0.77, "Championship": 0.87, "Premier_League": 1.00, "Other_Foreign": 0.72
-}
-
-def calculate_tier1_translation_factor(p):
-    league = p.get("source_league", "Premier_League")
-    base_coef = LEAGUE_BASE_STRENGTHS.get(league, 0.75)
-    if league == "Premier_League":
-        return 1.00
-    try: age = int(p.get("age", 25))
-    except: age = 25
-    age_modifier = 1.05 if age <= 22 else (0.92 if age >= 29 else 1.00)
-    pos_id = p["pos_id"]
-    pos_resilience = 1.02 if pos_id in [3, 4] else 0.96
-    return max(0.65, min(0.98, base_coef * age_modifier * pos_resilience))
+# Moved to fpl_funcs
 
 # Replaced xmins centrally
 
