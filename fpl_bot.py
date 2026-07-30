@@ -13,9 +13,6 @@ from fpl_funcs import (
     get_gameweek_state
 )
 
-# Resolve gameweek targets
-active_gw, target_gw = get_gameweek_state(bootstrap_data)
-
 # 1. Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
@@ -466,7 +463,10 @@ def get_fpl_data(target_gw,active_gw):
     except Exception as e:
         print(f"ERROR fetching bootstrap data: {e}")
         sys.exit(1)
-        
+
+    # Resolve gameweek targets
+    active_gw, target_gw = get_gameweek_state(bootstrap_data)
+    
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
     
