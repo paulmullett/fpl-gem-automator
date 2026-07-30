@@ -16,8 +16,9 @@ from fpl_funcs import (
 )
 
 # 1. Fetch the master FPL data payload FIRST
+headers = {"User-Agent": "FPL-Compare-Script/1.0"}
 try:
-    resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10)
+    resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10, headers=headers)
     bootstrap_data = resp.json()
 except Exception as e:
     print(f"Failed to fetch FPL data: {e}")
@@ -246,12 +247,12 @@ def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_star
         print(f"Failed to send Discord webhook: {e}")
 
 def run_comparison():
-    headers = {"User-Agent": "FPL-Compare-Script/1.0"}
-    resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
-    if resp.status_code != 200:
-        print("CRITICAL ERROR: Failed to reach FPL API.")
-        sys.exit(1)
-    bootstrap_data = resp.json()
+    #headers = {"User-Agent": "FPL-Compare-Script/1.0"}
+    #resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
+    #if resp.status_code != 200:
+    #    print("CRITICAL ERROR: Failed to reach FPL API.")
+    #    sys.exit(1)
+    #bootstrap_data = resp.json()
 
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
