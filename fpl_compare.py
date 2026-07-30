@@ -12,7 +12,8 @@ from fpl_monte_carlo import run_monte_carlo_simulations
 from fpl_funcs import (
     estimate_xmins, 
     calculate_tier1_translation_factor,
-    get_gameweek_state
+    get_gameweek_state,
+    get_base_ev
 )
 
 # 1. Fetch the master FPL data payload FIRST
@@ -52,54 +53,7 @@ def get_user_current_squad(team_id):
 
 # league translations moved to fpl_funcs.py
 
-def get_base_ev(p, xmins_overrides):
-    pid_str = str(p["id"])
-    xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-    if xmins < 5.0:
-        return 0.0
-        
-    try:
-        ep = float(p.get("ep_next", 0.0))
-        xgi = float(p.get("xgi_90", 0.0))
-        xgc = float(p.get("xgc_90", 0.0) or 1.35)
-        cost = float(p.get("cost", 0.0))
-        own = float(p.get("own", 0.0))
-    except:
-        ep, xgi, xgc, cost, own = 0.0, 0.0, 1.35, 4.0, 0.0
-
-    pos_id = p["pos_id"]
-    mins_factor = xmins / 90.0
-    
-    baseline_xgi = 0.01 if pos_id == 1 else (0.08 if pos_id == 2 else (0.25 if pos_id == 3 else 0.35))
-    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
-    cost_premium = max(0.0, cost - cost_threshold)
-    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
-    
-    translation_mult = calculate_tier1_translation_factor(p)
-    adjusted_xgi = xgi * translation_mult
-    
-    shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
-
-    prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
-    app_points = (prob_60 * 2.0) + ((1.0 - prob_60) * 1.0)
-    
-    team_xga = xgc * mins_factor
-    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
-    cs_points = (cs_prob * (4.0 if pos_id in [1, 2] else (1.0 if pos_id == 3 else 0.0))) * prob_60
-    
-    extra_defensive_points = 0.0
-    if pos_id == 1:
-        estimated_saves = max(1.5, (xgc * 1.4))
-        extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
-    elif pos_id == 2:
-        extra_defensive_points = 0.22 * mins_factor if cost >= 5.5 else 0.08
-    
-    market_premium = 1.0 + (max(0, cost - 5.5) * 0.04)
-    pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
-    attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium
-    
-    raw_ev = app_points + attacking_points + cs_points + extra_defensive_points
-    return (raw_ev * 0.70) + (ep * 0.30)
+# Base EV moved to fpl_funcs.pydef 
 
 def get_ensemble_ev(p, xmins_overrides, market_data):
     ev_a = get_base_ev(p, xmins_overrides)
@@ -247,13 +201,6 @@ def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_star
         print(f"Failed to send Discord webhook: {e}")
 
 def run_comparison():
-    #headers = {"User-Agent": "FPL-Compare-Script/1.0"}
-    #resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
-    #if resp.status_code != 200:
-    #    print("CRITICAL ERROR: Failed to reach FPL API.")
-    #    sys.exit(1)
-    #bootstrap_data = resp.json()
-
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
 
