@@ -11,7 +11,8 @@ from fpl_monte_carlo import run_monte_carlo_simulations
 # combined functions
 from fpl_funcs import (
     estimate_xmins, 
-    calculate_tier1_translation_factor
+    calculate_tier1_translation_factor,
+    get_gameweek_state
 )
 
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
@@ -21,19 +22,16 @@ if not FPL_TEAM_ID:
     print("CRITICAL ERROR: Missing FPL_TEAM_ID environment variable.")
     sys.exit(1)
 
-def get_user_current_squad(team_id):
-    
-    # Dynamic gameweek resolution pattern
-    current_gw = next(
-        (event["id"] for event in bootstrap_data["events"] if event.get("is_current")),
-        1
-    )
-    url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/{current_gw}/picks/"
+def get_user_current_squad(team_id, active_gw):
+    """Fetch the user's starting picks from the active/last-completed gameweek."""
+    url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/{active_gw}/picks/"
     try:
         resp = requests.get(url, headers={"User-Agent": "FPL-Compare-Script/1.0"}, timeout=5)
         if resp.status_code == 200:
             picks = resp.json().get("picks", [])
             return [p["element"] for p in picks]
+        else:
+            print(f"Could not fetch picks for team {team_id} on GW{active_gw} (HTTP {resp.status_code})")
     except Exception as e:
         print(f"Could not fetch user picks for team {team_id}: {e}")
     return []
