@@ -15,6 +15,9 @@ from fpl_funcs import (
     get_gameweek_state
 )
 
+# Resolve gameweek targets
+active_gw, target_gw = get_gameweek_state(bootstrap_data)
+
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 
