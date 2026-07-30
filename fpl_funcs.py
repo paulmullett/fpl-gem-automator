@@ -107,3 +107,102 @@ def get_gameweek_state(bootstrap_data):
     active_gw = current_gw_id or (target_gw if target_gw > 1 else 1)
     
     return active_gw, target_gw
+
+# Base EV
+
+def get_base_ev(p, xmins_overrides, weights=None):
+    """
+    Calculates the base Expected Value (EV) for an FPL player.
+    Accepts an optional weights dictionary for dynamic blending.
+    """
+    if weights is None:
+        weights = {}
+
+    pid_str = str(p.get("id"))
+    
+    if xmins_overrides and pid_str in xmins_overrides:
+        xmins = float(xmins_overrides[pid_str])
+    else:
+        xmins = estimate_xmins(p)
+        
+    if xmins < 5.0:
+        return 0.0
+        
+    # Safe, isolated parsing
+    try: ep = float(p.get("ep_next", 0.0))
+    except (ValueError, TypeError): ep = 0.0
+    
+    try: xgi = float(p.get("xgi_90", 0.0))
+    except (ValueError, TypeError): xgi = 0.0
+    
+    try: xgc = float(p.get("xgc_90", 0.0))
+    except (ValueError, TypeError): xgc = 1.35
+    if xgc <= 0.0: 
+        xgc = 1.35
+        
+    try: cost = float(p.get("cost", 0.0))
+    except (ValueError, TypeError): cost = 4.0
+    
+    try: own = float(p.get("own", 0.0))
+    except (ValueError, TypeError): own = 0.0
+
+    pos_id = p.get("pos_id", 3)
+    mins_factor = xmins / 90.0
+    
+    # 1. Bayesian Shrinkage
+    if pos_id == 1: baseline_xgi = 0.01
+    elif pos_id == 2: baseline_xgi = 0.08
+    elif pos_id == 3: baseline_xgi = 0.25
+    elif pos_id == 4: baseline_xgi = 0.35
+    else: baseline_xgi = 0.10
+    
+    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
+    cost_premium = max(0.0, cost - cost_threshold)
+    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
+    
+    # Apply translation factor to xgi before shrinkage
+    translation_mult = calculate_tier1_translation_factor(p)
+    adjusted_xgi = xgi * translation_mult
+    
+    shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
+
+    # 2. Logistic Regression (Sigmoid) Appearance Points
+    prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
+    prob_1_59 = (1.0 - prob_60)
+    app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
+
+    # 3. Poisson Clean Sheet Engine (60-minute rule)
+    team_xga = xgc * mins_factor
+    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
+    
+    if pos_id in [1, 2]: 
+        cs_points = (cs_prob * 4.0) * prob_60
+    elif pos_id == 3: 
+        cs_points = (cs_prob * 1.0) * prob_60
+    else:
+        cs_points = 0.0
+        
+    # 4. Extra Defensive Points (Saves & BPS)
+    extra_defensive_points = 0.0
+    if pos_id == 1:
+        estimated_saves = max(1.5, (xgc * 1.4))
+        extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
+    elif pos_id == 2:
+        extra_defensive_points = 0.22 * mins_factor if cost >= 5.5 else 0.08
+        
+    # 5. Continuous Market-Priced Finisher Curve
+    market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
+    
+    if pos_id == 2: pos_mult = 4.2       
+    elif pos_id == 3: pos_mult = 4.0     
+    else: pos_mult = 3.6                      
+        
+    attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
+    
+    raw_ev = app_points + attacking_points + cs_points + extra_defensive_points
+    
+    # Dynamic blending using the optional weights parameter
+    xgi_mult = weights.get("xgi_weight", 0.70)
+    final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
+    
+    return final_ev
