@@ -33,7 +33,7 @@ if not FPL_TEAM_ID:
     print("CRITICAL ERROR: Missing FPL_TEAM_ID environment variable.")
     sys.exit(1)
 
-def get_user_current_squad(team_id, active_gw):
+def get_user_current_squad(team_id):
     """Fetch the user's starting picks from the active/last-completed gameweek."""
     url = f"https://fantasy.premierleague.com/api/entry/{team_id}/event/{active_gw}/picks/"
     try:
