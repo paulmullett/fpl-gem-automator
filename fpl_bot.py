@@ -448,7 +448,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     return starters, sorted_bench, cap, vice
 
 # 6. Main Data Pipeline & Integration
-def get_fpl_data(target_gw,active_gw):
+def get_fpl_data():
     headers = {"User-Agent": "FPL-Auto-Script/13.0"}
     state = load_state()
     xmins_overrides = state.get("xmins_overrides", {})
