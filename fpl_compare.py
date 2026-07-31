@@ -55,26 +55,36 @@ def get_user_current_squad(team_id):
 
 # Base EV moved to fpl_funcs.pydef 
 
-def get_ensemble_ev(p, xmins_overrides, market_data):
-    ev_a = get_base_ev(p, xmins_overrides)
-    team_name = p.get("team")
+def get_ensemble_ev(p, xmins_overrides, market_data=None, weights=None):
+    """
+    Blends structural EV (Base) with momentum EV (Form/EP).
+    Applies live bookmaker odds (market_data) to the structural EV if provided.
+    """
+    # 1. Structural EV (from our unified get_base_ev)
+    ev_a = get_base_ev(p, xmins_overrides, weights)
     
-    if market_data and team_name in market_data:
-        m_metrics = market_data[team_name]
-        pos_id = p["pos_id"]
+    # 2. Market Odds Adjustments (Safe Copilot Logic)
+    if market_data and p.get("team") in market_data:
+        m_metrics = market_data[p.get("team")]
+        pos_id = p.get("pos_id", 3)
+        
         if pos_id in [1, 2]:
-            market_cs_mult = m_metrics["cs_prob"] / 0.35
+            market_cs_mult = m_metrics.get("cs_prob", 0.35) / 0.35
             ev_a *= (0.75 + (0.25 * market_cs_mult))
         else:
-            market_xg_mult = m_metrics["xG"] / 1.35
+            market_xg_mult = m_metrics.get("xG", 1.35) / 1.35
             ev_a *= (0.75 + (0.25 * market_xg_mult))
 
+    # 3. Momentum EV (Original Explicit Math)
     try:
         form = float(p.get("form", 0.0))
         ep = float(p.get("ep_next", 0.0))
-    except:
+    except (ValueError, TypeError):
         form, ep = 0.0, 0.0
+        
     ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
+    
+    # 4. Final Blend
     return (0.70 * ev_a) + (0.30 * ev_b)
 
 def solve_model(players_dict, market_data, use_ensemble=False):
