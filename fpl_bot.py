@@ -600,13 +600,19 @@ def get_fpl_data():
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
 
-    # --- DEBUG: SPECIFIC PLAYER EV AUDIT ---
+   # --- DEBUG: SPECIFIC PLAYER EV AUDIT ---
     debug_names = ["Saka", "Fernandes", "Gabriel", "Kinsky", "Raya", "Haaland"]
     print("\n--- DEBUG: PLAYER EV AUDIT ---")
     for p in players.values():
         if any(name.lower() in p["name"].lower() for name in debug_names):
-            ev = get_base_ev(p, weights, xmins_overrides)
-            print(f"{p['name']} ({p['team']}) - £{p['cost']}m | 1-GW EV: {ev:.3f} | xGI: {p['xgi_90']} | xGC: {p['xgc_90']}")
+            base_ev = get_base_ev(p, xmins_overrides, weights)
+            ens_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights)
+            
+            # Show net transfer momentum if it exists
+            net_transfers = p.get("transfers_in_event", 0) - p.get("transfers_out_event", 0)
+            
+            print(f"{p['name']} ({p['team']}) - £{p['cost']}m | Net Transfers: {net_transfers}")
+            print(f"   -> Base EV: {base_ev:.3f} | Ensemble EV: {ens_ev:.3f}")
     print("------------------------------\n")
 
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
