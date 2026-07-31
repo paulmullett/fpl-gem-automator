@@ -92,8 +92,14 @@ SECTION 4: SPATIAL, GAME-STATE & MOTIVATION JUSTIFICATION
 - Include an ASCII Spatial Overload / Pitch Mismatch Diagram inside a markdown text codeblock.
 - Detail Law 1 Game-State Normalization, Law 3 Spatial Mismatches, and Law 2 DefCon BPS math.
 
-SECTION 5: ITK & CONGESTION AUDIT
-- ASCII Matrix or structured breakdown covering ITK, Ben Dinnery injuries, and Ben Crellin schedule congestion.
+SECTION 5: HUMAN ORACLE INTELLIGENCE BRIEFING
+- STRICT NEGATIVE CONSTRAINT: You are a passive intelligence analyst. You MUST NOT claim to have altered the squad, EV, or xMins based on the live news. The math is already locked.
+- Filter the provided search data into two distinct categories:
+  1. VERIFIED STATUS: Concrete news from Ben Dinnery, Ben Crellin, or direct manager quotes regarding starting XI exclusions or long-term injuries.
+  2. UNVERIFIED SIGNALS: Reports of players omitted from traveling squads, unconfirmed leaks, or training ground absences.
+- Discard all generalized rumors, opinion pieces, or tactical speculation.
+- If a threat is detected in either category, provide the Actionable Drill Syntax for the human manager: 
+  -> **Recommended Oracle Input:** `[PlayerName]:0`
 
 MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
 - Conclude with the exact ASCII Box block provided in the payload containing the FINAL LOCKED-IN SQUAD SUMMARY, MULTI-PERIOD TRANSFER TREE, ALGORITHMIC CHIP RECOMMENDATIONS, and the SQUAD HEALTH & VARIANCE REPORT. Wrap this entire block inside a markdown text codeblock.
@@ -180,15 +186,29 @@ def recalibrate_model(state, headers, active_gw):
 def get_live_fpl_news():
     news_text = "### LIVE ITK NEWS & SCHEDULE DATA (Automatically Fetched)\n"
     try:
-        crellin_results = DDGS().text("Ben Crellin FPL blank double gameweek updates", max_results=3)
+        # 1. High-Trust Baseline (Past Week)
+        crellin_results = DDGS().text("Ben Crellin FPL blank double gameweek updates", max_results=3, timelimit='w')
         news_text += "--- SCHEDULE CHANGES (Ben Crellin) ---\n"
         for r in crellin_results:
             news_text += f"- {r.get('body', '')}\n"
             
-        dinnery_results = DDGS().text("Ben Dinnery FPL injuries team news press conference", max_results=3)
+        dinnery_results = DDGS().text("Ben Dinnery FPL injuries team news press conference", max_results=3, timelimit='w')
         news_text += "\n--- INJURY UPDATES (Ben Dinnery) ---\n"
         for r in dinnery_results:
             news_text += f"- {r.get('body', '')}\n"
+
+        # 2. General Press Conference Dragnet (Past Day only - using .news() for fresh articles)
+        press_results = DDGS().news("Premier League manager press conference injury updates today", max_results=3, timelimit='d')
+        news_text += "\n--- PRESS CONFERENCE UPDATES ---\n"
+        for r in press_results:
+            news_text += f"- {r.get('body', '')}\n"
+
+        # 3. Late Leak & Travel Dragnet (Past Day only)
+        leak_results = DDGS().text("FPL late team news leaks traveling squad omitted", max_results=3, timelimit='d')
+        news_text += "\n--- SQUAD OMISSIONS & LEAKS ---\n"
+        for r in leak_results:
+            news_text += f"- {r.get('body', '')}\n"
+            
     except Exception as e:
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
