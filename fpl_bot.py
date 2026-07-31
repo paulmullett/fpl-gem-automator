@@ -20,6 +20,7 @@ from fpl_funcs import (
     calculate_dynamic_bench_discount
 )
 from fpl_odds_engine import get_market_adjustments
+from fpl_mpo_engine import solve_multi_period_model
 
 # 1. Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -215,162 +216,6 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
             flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion.]")
     return flags
 
-# 5. Execution Engine: Portfolio Optimization MILP Solver
-def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, active_chip, market_data=None):
-    prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
-    valid_ids = list(players_dict.keys())
-    
-    # Aggressive override to prevent budget bleeding onto the bench
-    # Dynamic Probabilistic Bench Weighting
-    if active_chip == "BENCH_BOOST":
-        bench_discount = 1.0
-    else:
-        # Calculate risk based on initial candidate starters or default baseline
-        starter_candidates = [players_dict[i] for i in valid_ids if players_dict[i].get("cost", 0) >= 6.0][:11]
-        bench_discount = calculate_dynamic_bench_discount(starter_candidates, xmins_overrides)
-        
-    captain_multiplier = 2.0 if active_chip == "TRIPLE_CAPTAIN" else 1.0
-        
-    squad_vars = pulp.LpVariable.dicts("squad", valid_ids, cat="Binary")
-    starter_vars = pulp.LpVariable.dicts("starter", valid_ids, cat="Binary")
-    captain_vars = pulp.LpVariable.dicts("captain", valid_ids, cat="Binary")
-    extra_transfers = pulp.LpVariable("extra_transfers", lowBound=0, cat="Continuous")
-    
-    objective = []
-    for i in valid_ids:
-        p = players_dict[i]
-        ev = get_macro_ev(p, team_avg_fdr, weights, xmins_overrides)
-        
-        ownership = p.get("own", 0.0)
-        own_pct = ownership / 100.0
-        rank_threat_gravity = (ev * (own_pct ** 2) * 0.75)
-            
-        # Price Momentum Heuristic
-        transfers_in = p.get("transfers_in_event", 0)
-        transfers_out = p.get("transfers_out_event", 0)
-        net_transfers = transfers_in - transfers_out
-        
-        # Scale net transfers into a micro-EV boost (+0.05 for every 100k net transfers)
-        momentum_boost = (net_transfers / 100000.0) * 0.05
-        value_gain_score = max(0.0, momentum_boost)
-        
-        own_tiebreaker = ownership * 0.0001
-        
-        objective.append(
-            (ev * starter_vars[i]) + 
-            ((ev * captain_multiplier + rank_threat_gravity) * captain_vars[i]) + 
-            (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
-            ((own_tiebreaker + value_gain_score) * squad_vars[i])
-        )
-        
-    prob += pulp.lpSum(objective) - (4.0 * extra_transfers)
-    
-    for i in valid_ids:
-        p = players_dict[i]
-        
-        prob += starter_vars[i] <= squad_vars[i]
-        prob += captain_vars[i] <= starter_vars[i]
-        
-        if i not in current_squad_ids:
-            chance = str(p.get("chance_of_playing_next_round", ""))
-            if chance == "0" or p.get("status") not in ["a", "d"]:
-                prob += squad_vars[i] == 0
-
-    prob += pulp.lpSum([squad_vars[i] for i in valid_ids]) == 15
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids]) == 11
-    prob += pulp.lpSum([captain_vars[i] for i in valid_ids]) == 1
-    
-    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
-    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
-    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
-    prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
-    
-    # STRICT LEGAL FORMATION CONSTRAINTS (Min 3 DEF, Min 3 MID, Min 1 FWD)
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) >= 3
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 2]) <= 5
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) >= 3
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 3]) <= 5
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) >= 1
-    prob += pulp.lpSum([starter_vars[i] for i in valid_ids if players_dict[i]["pos_id"] == 4]) <= 3
-
-    team_ids = set(players_dict[i]["team_id"] for i in valid_ids)
-    for t_id in team_ids:
-        prob += pulp.lpSum([squad_vars[i] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
-
-    effective_budget = total_budget - required_bank_reservation
-    prob += pulp.lpSum([players_dict[i]["cost"] * squad_vars[i] for i in valid_ids]) <= effective_budget
-
-    if active_chip not in ["FREE_HIT", "WILDCARD"] and str(free_transfers).lower() != "unlimited":
-        try: ft = int(''.join(filter(str.isdigit, str(free_transfers))))
-        except: ft = 1
-        if current_squad_ids and len(current_squad_ids) == 15:
-            overlap = [i for i in current_squad_ids if i in valid_ids]
-            players_kept = pulp.lpSum([squad_vars[i] for i in overlap])
-            transfers_made = 15 - players_kept
-            prob += extra_transfers >= transfers_made - ft
-
-    prob.solve(pulp.PULP_CBC_CMD(msg=False))
-    
-    # --- PHASE 2: MICRO-OPTIMIZATION (SINGLE GW) ---
-    squad_players = []
-    for i in valid_ids:
-        if squad_vars[i].varValue and squad_vars[i].varValue > 0.5:
-            squad_players.append(players_dict[i])
-            
-    sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
-    s_vars = pulp.LpVariable.dicts("s", [p["id"] for p in squad_players], cat="Binary")
-    c_vars = pulp.LpVariable.dicts("c", [p["id"] for p in squad_players], cat="Binary")
-    
-    sub_objective = []
-    for p in squad_players:
-        ev_1gw = get_ensemble_ev(p, xmins_overrides, market_data, weights)
-        try: ownership = float(p.get("own", 0.0))
-        except: ownership = 0.0
-        
-        own_pct = ownership / 100.0
-        rank_threat_gravity = (ev_1gw * (own_pct ** 2) * 0.75)
-            
-        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * captain_multiplier + rank_threat_gravity) * c_vars[p["id"]]) )
-        
-    sub_prob += pulp.lpSum(sub_objective)
-    
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players]) == 11
-    sub_prob += pulp.lpSum([c_vars[p["id"]] for p in squad_players]) == 1
-    
-    for p in squad_players:
-        sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
-            
-    # STRICT LEGAL FORMATION CONSTRAINTS (Phase 2 Sub-Solver)
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 1]) == 1
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 2]) >= 3
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 3]) >= 3
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in squad_players if p["pos_id"] == 4]) >= 1
-    
-    sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
-    
-    starters, bench = [], []
-    cap = None
-    
-    for p in squad_players:
-        if s_vars[p["id"]].varValue and s_vars[p["id"]].varValue > 0.5:
-            starters.append(p)
-            if c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5:
-                cap = p
-        else:
-            bench.append(p)
-            
-    starters.sort(key=lambda x: x["pos_id"])
-    
-    bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_ensemble_ev(x, xmins_overrides, market_data, weights), reverse=True)
-    sorted_bench = bench_gk + bench_outfield
-    
-    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_ensemble_ev(x, xmins_overrides, market_data, weights), reverse=True)
-    vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
-            
-    return starters, sorted_bench, cap, vice
-
 # 6. Main Data Pipeline & Integration
 def get_fpl_data():
 
@@ -426,131 +271,101 @@ def get_fpl_data():
                 
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
-    players = {}
-    for raw_p in bootstrap_data["elements"]:
-        p_norm = normalize_player(raw_p, teams, element_types)
-        players[p_norm["id"]] = p_norm
-        
-    market_list = []
-    available_players = [p for p in players.values() if p.get("status") in ["a", "d"]]
-    for pos_id in [1, 2, 3, 4]: 
-        pos_players = [p for p in available_players if p["pos_id"] == pos_id]
-        def safe_float_own(player):
-            try: return float(player.get("own", 0.0))
-            except: return 0.0
-        top_pos = sorted(pos_players, key=safe_float_own, reverse=True)[:30]
-        for p in top_pos:
-            news_flag = f" | FLAG: {p['news']}" if p['news'] else ""
-            market_list.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned, Status: {p['status']}{news_flag})")
-    market_str = "\n".join(market_list)
+    # 1. Build Dynamic Gameweek Matrix (FDR per GW)
+    team_gw_fdr = {t_id: [6.0] * 4 for t_id in teams.keys()} # Default 6.0 = Blank GW
+    for f in fixtures_data:
+        event = f.get("event")
+        if event and target_gw <= event < target_gw + 4:
+            t = event - target_gw
+            team_a, team_h = f.get("team_a"), f.get("team_h")
+            if team_a in team_gw_fdr:
+                team_gw_fdr[team_a][t] = f.get("team_a_difficulty", 3) if team_gw_fdr[team_a][t] == 6.0 else 1.0 # Account for DGWs
+            if team_h in team_gw_fdr:
+                team_gw_fdr[team_h][t] = f.get("team_h_difficulty", 3) if team_gw_fdr[team_h][t] == 6.0 else 1.0
 
-    new_arrivals = []
-    for p in players.values():
-        is_new_transfer = (p["total_points"] == 0 and p["cost"] >= 5.5 and p["status"] in ["a", "d"])
-        if is_new_transfer:
-            new_arrivals.append(f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, {p['own']}% owned) | NOTE: Zero Baseline Data")
-    new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "No recent high-profile foreign arrivals detected in API."
-    
-    squad_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{active_gw}/picks/"
-    transfers_url = f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/transfers/"
-    
-    current_squad_ids, transfer_ledger = [], []
-    
-    try:
-        sq_resp = requests.get(squad_url, headers=headers)
-        if sq_resp.status_code == 200:
-            current_squad_ids = [pick["element"] for pick in sq_resp.json().get("picks", [])]
-    except Exception as e:
-        print(f"WARNING: Error fetching squad picks: {e}")
-
-    try:
-        tr_resp = requests.get(transfers_url, headers=headers)
-        if tr_resp.status_code == 200:
-            transfer_ledger = tr_resp.json()
-    except Exception as e:
-        print(f"WARNING: Error fetching transfer ledger: {e}")
-
-    liquid_squad_value = 0.0
-    for pid in current_squad_ids:
+    # 2. Build EV Matrix for all players across horizons
+    ev_matrix = {}
+    valid_ids = [p["id"] for p in players.values() if p.get("status") in ["a", "d"]]
+    for pid in valid_ids:
         p = players[pid]
-        now_cost_raw = int(p["cost"] * 10)
+        ev_matrix[pid] = [0.0] * 4
+        t_id = p["team_id"]
         
-        purchase_price_raw = None
-        for t in reversed(transfer_ledger):
-            if t["element_in"] == pid:
-                purchase_price_raw = t["element_in_cost"]
-                break
-                
-        if purchase_price_raw is None:
-            purchase_price_raw = now_cost_raw - p["cost_change_start"]
-            
-        profit = now_cost_raw - purchase_price_raw
-        selling_price_raw = purchase_price_raw + (profit // 2) if profit > 0 else now_cost_raw
-            
-        p["purchase_price"] = purchase_price_raw / 10.0
-        p["selling_price"] = selling_price_raw / 10.0
-        liquid_squad_value += p["selling_price"]
+        # t=0: Live Ensemble EV (Bookmaker Odds + Momentum)
+        ev_matrix[pid][0] = get_ensemble_ev(p, xmins_overrides, market_data, weights)
         
-        pid_str = str(pid)
-        if pid_str not in price_watchlist:
-            price_watchlist[pid_str] = p["purchase_price"]
+        # t=1 to 3: Structural Base EV modulated by specific GW Fixture Difficulty
+        base_ev = get_base_ev(p, xmins_overrides, weights)
+        for t in range(1, 4):
+            fdr = team_gw_fdr[t_id][t]
+            if fdr == 6.0: 
+                ev_matrix[pid][t] = 0.0 # Blank Gameweek penalty
+            else:
+                fdr_multiplier = 1.0 + (3.0 - fdr) * 0.10
+                ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier)
 
-    bank = 0.0
-    free_transfers = "Unlimited (Pre-Season GW1)" if target_gw == 1 else "1+"
-    try:
-        hist_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers)
-        if hist_resp.status_code == 200:
-            h_data = hist_resp.json()
-            if h_data.get("current"):
-                bank = h_data["current"][-1].get("bank", 0) / 10.0
-    except Exception as e:
-        print(f"WARNING: Error fetching history: {e}")
+    # 3. Execute Phase 1: True MPO Solver
+    starter_candidates = [players[i] for i in valid_ids if players[i].get("cost", 0) >= 6.0][:11]
+    bench_discount = 1.0 if ACTIVE_CHIP == "BENCH_BOOST" else calculate_dynamic_bench_discount(starter_candidates, xmins_overrides)
 
-    total_liquid_budget = liquid_squad_value + bank if current_squad_ids else 100.0
-
-    required_bank_reservation = 0.0
-    active_targets = state.get("buyback_targets", {})
-    updated_targets = {}
-
-    for pid_str, target_info in active_targets.items():
-        if target_gw <= target_info["return_gw"]:
-            updated_targets[pid_str] = target_info
-            if int(pid_str) not in current_squad_ids:
-                required_bank_reservation += target_info["reserved_bank"]
-
-    for pid in current_squad_ids:
-        p = players[pid]
-        chance = str(p.get("chance_of_playing_next_round", ""))
-        
-        if chance in ["0", "25", "50"] and p["cost"] >= 9.0:
-            trapped_equity = p["cost"] - p["selling_price"]
-            
-            if chance == "0": injury_weeks = 4
-            elif chance == "25": injury_weeks = 2
-            else: injury_weeks = 1
-                
-            remaining_season_gws = max(1, 38 - target_gw)
-            short_term_replacement_gain = injury_weeks * 4.0
-            long_term_equity_loss = trapped_equity * 0.25 * remaining_season_gws
-            crossover_ev = short_term_replacement_gain - long_term_equity_loss
-
-            if crossover_ev > 0:
-                target_buyback_price = p["cost"]
-                buyback_reserve = max(0.0, target_buyback_price - 7.5)
-                
-                updated_targets[str(pid)] = {
-                    "name": p["name"], "sell_gw": target_gw, "return_gw": target_gw + injury_weeks,
-                    "selling_price": p["selling_price"], "target_buyback_price": target_buyback_price,
-                    "reserved_bank": buyback_reserve
-                }
-                required_bank_reservation += buyback_reserve
-
-    state["buyback_targets"] = updated_targets
-    state["price_watchlist"] = price_watchlist
-
-    starters, bench, cap, vice = solve_fpl_knapsack(
-        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, ACTIVE_CHIP, market_data
+    optimal_squad, transfer_plan = solve_multi_period_model(
+        players, 
+        ev_matrix, 
+        current_squad_ids, 
+        total_liquid_budget - required_bank_reservation, 
+        free_transfers, 
+        bench_discount,
+        horizons=4
     )
+
+    # 4. Execute Phase 2: Micro-Optimization (Starting XI & Captaincy Selection for t=0)
+    import pulp
+    sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
+    s_vars = pulp.LpVariable.dicts("s", [p["id"] for p in optimal_squad], cat="Binary")
+    c_vars = pulp.LpVariable.dicts("c", [p["id"] for p in optimal_squad], cat="Binary")
+    
+    cap_mult = 2.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 1.0
+    
+    sub_objective = []
+    for p in optimal_squad:
+        ev_1gw = ev_matrix[p["id"]][0]
+        ownership = p.get("own", 0.0) / 100.0
+        rank_threat_gravity = (ev_1gw * (ownership ** 2) * 0.75)
+        sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * cap_mult + rank_threat_gravity) * c_vars[p["id"]]) )
+        
+    sub_prob += pulp.lpSum(sub_objective)
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad]) == 11
+    sub_prob += pulp.lpSum([c_vars[p["id"]] for p in optimal_squad]) == 1
+    
+    for p in optimal_squad:
+        sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
+            
+    # STRICT LEGAL FORMATION CONSTRAINTS
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 1]) == 1
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) >= 3
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 3]) >= 3
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 4]) >= 1
+    
+    sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    
+    starters, bench = [], []
+    cap = None
+    for p in optimal_squad:
+        if s_vars[p["id"]].varValue and s_vars[p["id"]].varValue > 0.5:
+            starters.append(p)
+            if c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5:
+                cap = p
+        else:
+            bench.append(p)
+            
+    starters.sort(key=lambda x: x["pos_id"])
+    bench_gk = [p for p in bench if p["pos_id"] == 1]
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+    bench = bench_gk + bench_outfield
+    
+    starters_sorted_by_1gw = sorted(starters, key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+    vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
+    
     optimal_squad = starters + bench
 
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
@@ -597,8 +412,12 @@ def get_fpl_data():
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
         actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
         locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
-    
+       
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n\n"
+    
+    if transfer_plan:
+        locked_squad_str += "\n### MULTI-PERIOD TRANSFER TREE (MPO)\n"
+        locked_squad_str += "\n".join(transfer_plan) + "\n"
 
     # --- SQUAD HEALTH & VARIANCE REPORT (SQUAD COMMAND CENTER) ---
     macro_squad_4gw_xp = sum(get_macro_ev(p, team_avg_fdr, weights, xmins_overrides) for p in optimal_squad)
