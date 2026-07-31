@@ -27,7 +27,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
-
+XMINS_INPUT = os.environ.get("XMINS_INPUT", "")
 ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
 STATE_FILE_PATH = "fpl_state.json"
 
@@ -261,6 +261,26 @@ def get_fpl_data():
     new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "None"
     market_str = "Market data initialized."
 
+    new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "None"
+    market_str = "Market data initialized."
+
+    # --- THE DATA ORACLE: HUMAN INTELLIGENCE OVERRIDES ---
+    if XMINS_INPUT:
+        print(f"Processing Human Oracle Input: {XMINS_INPUT}")
+        for override in XMINS_INPUT.split(","):
+            if ":" in override:
+                name_part, min_part = override.split(":")
+                name_part = name_part.strip().lower()
+                try:
+                    target_mins = float(min_part.strip())
+                    for pid, p in players.items():
+                        if name_part in p["name"].lower() or name_part in p.get("web_name", "").lower():
+                            xmins_overrides[str(pid)] = target_mins
+                            print(f"   -> ORACLE OVERRIDE: {p['name']} locked to {target_mins} mins.")
+                except ValueError:
+                    print(f"   -> WARNING: Could not parse override '{override}'")
+    # -----------------------------------------------------
+    
     current_squad_ids = []
     bank = 0.0
     total_liquid_budget = 100.0
