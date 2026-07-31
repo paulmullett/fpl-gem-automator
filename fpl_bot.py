@@ -242,6 +242,45 @@ def get_fpl_data():
     
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
+
+    # Resolve gameweek targets
+    active_gw, target_gw = get_gameweek_state(bootstrap_data)
+    
+    teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
+    element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
+    
+    # --- RESTORED DATA PARSING BLOCK ---
+    players = {}
+    new_arrivals = []
+    for raw_p in bootstrap_data.get("elements", []):
+        p = normalize_player(raw_p, teams, element_types)
+        players[p["id"]] = p
+        if p.get("has_stale_pl_history") or p.get("minutes", 0) == 0:
+            new_arrivals.append(f"- {p['name']} ({p['team']})")
+
+    new_arrivals_str = "\n".join(new_arrivals) if new_arrivals else "None"
+    market_str = "Market data initialized."
+
+    current_squad_ids = []
+    bank = 0.0
+    total_liquid_budget = 100.0
+    free_transfers = "Unlimited" if target_gw == 1 else 1
+    required_bank_reservation = 0.0
+
+    if target_gw > 1:
+        try:
+            team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
+            if team_resp.status_code == 200:
+                team_data = team_resp.json()
+                current_squad_ids = [pick["element"] for pick in team_data.get("picks", [])]
+                entry_history = team_data.get("entry_history", {})
+                bank = entry_history.get("bank", 0) / 10.0
+                total_liquid_budget = entry_history.get("value", 1000) / 10.0
+        except Exception as e:
+            print(f"WARNING: Could not fetch squad for team {FPL_TEAM_ID}: {e}")
+    # --- END RESTORED BLOCK ---
+
+    state = recalibrate_model(state, headers, active_gw)
     
     state = recalibrate_model(state, headers, active_gw)
     state["last_updated_gw"] = target_gw
