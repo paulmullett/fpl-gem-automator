@@ -189,23 +189,14 @@ def get_base_ev(p, xmins_overrides, weights=None):
     if xmins < 5.0:
         return 0.0
         
-    # Safe, isolated parsing
-    try: ep = float(p.get("ep_next", 0.0))
-    except (ValueError, TypeError): ep = 0.0
-    
-    try: xgi = float(p.get("xgi_90", 0.0))
-    except (ValueError, TypeError): xgi = 0.0
-    
-    try: xgc = float(p.get("xgc_90", 0.0))
-    except (ValueError, TypeError): xgc = 1.35
+    # Safe parsing using _safe_float
+    ep = _safe_float(p.get("ep_next"), 0.0)
+    xgi = _safe_float(p.get("xgi_90"), 0.0)
+    xgc = _safe_float(p.get("xgc_90"), 1.35)
     if xgc <= 0.0: 
         xgc = 1.35
-        
-    try: cost = float(p.get("cost", 0.0))
-    except (ValueError, TypeError): cost = 4.0
-    
-    try: own = float(p.get("own", 0.0))
-    except (ValueError, TypeError): own = 0.0
+    cost = _safe_float(p.get("cost"), 4.0)
+    own = _safe_float(p.get("own"), 0.0)
 
     pos_id = p.get("pos_id", 3)
     mins_factor = xmins / 90.0
