@@ -66,7 +66,7 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 
 4. QUALITATIVE OVERRIDES & TIER-1 LEAK VERIFICATION
 - 15-Minute Panic Rule: Late leaks affecting >2 decisions within 15 mins of deadline default to the original multi-week EV plan.
-- Cup Congestion Law: Apply a 25% xMins penalty to starters with <72 hours turnaround from cup matches. If no turnarounds violate 72 hours, state this concisely.
+- Cup Congestion Law & Hallucination Guardrail: STRICT NEGATIVE CONSTRAINT: If a player's projected xMins in the mathematically locked payload is >80.0, you MUST NOT claim or hallucinate that a 25% minute dampener was applied. If no turnarounds violate 72 hours, state this concisely and confirm minutes are untouched.
 
 5. FOREIGN TRANSFERS & TIERED LEAGUE TRANSLATION
 - Tiered Translation Coefficients: Apply granular scaling multipliers to expected attacking output (npxG/xAG) based on competition source tiers.
@@ -490,10 +490,11 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     if WORKFLOW_INPUT == "post_gameweek_review":
         action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
         phase_instructions = (
-            "- FOCUS: Backward-looking performance evaluation and medium-term squad positioning.\n"
-            "- Explain the Model Recalibration results and residual error from the previous Gameweek.\n"
-            "- Evaluate price volatility, impending price rises/falls, and early transfer timing to protect team value.\n"
-            "- Detail the MULTI-PERIOD TRANSFER TREE (MPO) roadmap for GW+1 through GW+3."
+            "- FOCUS: Backward-looking performance evaluation, market equity, and medium-term planning.\n"
+            "- STRICT PHASE ISOLATION: Do NOT generate a pre-match pitch mismatch diagram. Do NOT write a player-by-player tactical justification for the starting XI. Focus entirely on structural health and future planning.\n"
+            "- Explain Model Recalibration results, residual error, and target impending price volatility.\n"
+            "- Detail the MULTI-PERIOD TRANSFER TREE (MPO) roadmap for GW+1 through GW+3.\n"
+            f"- GW1 ZERO-STATE RULE: If target_gw is 1, explicitly acknowledge that actual recalibration and price volatility data are pending the first real-world fixtures, and bypass those summaries."
         )
     elif WORKFLOW_INPUT == "pre_gameweek_deadline":
         action_type = "Pre-Gameweek Final Deadline Lock & Late ITK Leak Audit"
@@ -512,8 +513,8 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     focus_instructions = (
         f"1. 11-Man Verification Lock & Strict xMins Audit: Output the exact mathematically locked Starting XI and Bench provided. Do NOT change any player, captain, bench order, or team affiliation tag.\n"
         f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
-        f"3. Visual Aesthetics: Include monospaced ASCII pitch maps in Section 1 and Section 4 using markdown text codeblocks. Format Section 2 strictly as single-line bullet points with bold player names. Avoid wide Markdown tables.\n"
-        f"4. Analytical Justification: Use the EXACT 'TRUE 1-GW EV' numbers provided in the mathematically locked squad list below. Do NOT invent or hallucinate Expected Value (EV) numbers.\n"
+        f"3. Visual Aesthetics: Format Section 2 strictly as single-line bullet points with bold player names. Avoid wide Markdown tables.\n"
+        f"4. Analytical Justification: Use the EXACT 'TRUE 1-GW EV' and 'Proj. Mins' numbers provided in the payload. Do NOT invent Expected Value (EV) numbers.\n"
         f"5. Transfer Trees & Chips: In Section 3, explicitly explain the MULTI-PERIOD TRANSFER TREE roadmap and the ALGORITHMIC CHIP RECOMMENDATIONS provided in the payload.\n"
         f"6. MANDATORY SIGN-OFF: Conclude your response with the boxed 'FINAL LOCKED-IN SQUAD SUMMARY' ASCII block."
     )
