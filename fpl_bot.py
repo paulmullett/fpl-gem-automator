@@ -241,19 +241,26 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
         p = players_dict[i]
         ev = get_macro_ev(p, team_avg_fdr, weights, xmins_overrides)
         
-        try: ownership = float(p.get("own", 0.0))
-        except: ownership = 0.0
-        
+        ownership = p.get("own", 0.0)
         own_pct = ownership / 100.0
         rank_threat_gravity = (ev * (own_pct ** 2) * 0.75)
             
+        # Price Momentum Heuristic
+        transfers_in = p.get("transfers_in_event", 0)
+        transfers_out = p.get("transfers_out_event", 0)
+        net_transfers = transfers_in - transfers_out
+        
+        # Scale net transfers into a micro-EV boost (+0.05 for every 100k net transfers)
+        momentum_boost = (net_transfers / 100000.0) * 0.05
+        value_gain_score = max(0.0, momentum_boost)
+        
         own_tiebreaker = ownership * 0.0001
         
         objective.append(
             (ev * starter_vars[i]) + 
             ((ev * captain_multiplier + rank_threat_gravity) * captain_vars[i]) + 
             (bench_discount * ev * (squad_vars[i] - starter_vars[i])) + 
-            (own_tiebreaker * squad_vars[i])
+            ((own_tiebreaker + value_gain_score) * squad_vars[i])
         )
         
     prob += pulp.lpSum(objective) - (4.0 * extra_transfers)
