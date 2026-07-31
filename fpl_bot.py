@@ -611,6 +611,7 @@ def get_fpl_data():
     starter_floor = sum(res["floor"] for res in mc_results.values())
     starter_ceiling = sum(res["ceiling"] for res in mc_results.values())
 
+    locked_squad_str += "\n"
     locked_squad_str += "================================================================================\n"
     locked_squad_str += "SQUAD HEALTH & VARIANCE REPORT\n"
     locked_squad_str += "================================================================================\n"
