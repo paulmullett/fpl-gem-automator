@@ -94,7 +94,7 @@ SECTION 5: ITK & CONGESTION AUDIT
 - ASCII Matrix or structured breakdown covering ITK, Ben Dinnery injuries, and Ben Crellin schedule congestion.
 
 MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
-- You MUST conclude with an ASCII Box block formatted exactly as below, and you MUST wrap this entire block inside a markdown text codeblock:
+- You MUST conclude with the exact ASCII Box block provided in the payload containing the FINAL LOCKED-IN SQUAD SUMMARY and the SQUAD HEALTH & VARIANCE REPORT. Wrap this entire block inside a markdown text codeblock.
 
 ================================================================================
 FINAL LOCKED-IN SQUAD SUMMARY: GAMEWEEK [X]
@@ -598,22 +598,27 @@ def get_fpl_data():
         actual_ev = round(get_base_ev(p, weights, xmins_overrides), 2)
         locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
     
-    locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
+    locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n\n"
 
-   # --- DEBUG: SPECIFIC PLAYER EV AUDIT ---
-    debug_names = ["Saka", "Fernandes", "Gabriel", "Kinsky", "Raya", "Haaland"]
-    print("\n--- DEBUG: PLAYER EV AUDIT ---")
-    for p in players.values():
-        if any(name.lower() in p["name"].lower() for name in debug_names):
-            base_ev = get_base_ev(p, xmins_overrides, weights)
-            ens_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights)
-            
-            # Show net transfer momentum if it exists
-            net_transfers = p.get("transfers_in_event", 0) - p.get("transfers_out_event", 0)
-            
-            print(f"{p['name']} ({p['team']}) - £{p['cost']}m | Net Transfers: {net_transfers}")
-            print(f"   -> Base EV: {base_ev:.3f} | Ensemble EV: {ens_ev:.3f}")
-    print("------------------------------\n")
+    # --- SQUAD HEALTH & VARIANCE REPORT (SQUAD COMMAND CENTER) ---
+    macro_squad_4gw_xp = sum(get_macro_ev(p, team_avg_fdr, weights, xmins_overrides) for p in optimal_squad)
+    
+    # Calculate Monte Carlo stochastic bounds for starting XI
+    from fpl_monte_carlo import run_monte_carlo_simulations
+    mc_players = {p["id"]: {"est_xmins": estimate_xmins(p), "xgi_90": p["xgi_90"], "pos_id": p["pos_id"], "ep_next": p["ep_next"]} for p in starters}
+    mc_results = run_monte_carlo_simulations(mc_players, num_trials=1000)
+    
+    starter_floor = sum(res["floor"] for res in mc_results.values())
+    starter_ceiling = sum(res["ceiling"] for res in mc_results.values())
+
+    locked_squad_str += "================================================================================\n"
+    locked_squad_str += "SQUAD HEALTH & VARIANCE REPORT\n"
+    locked_squad_str += "================================================================================\n"
+    locked_squad_str += f"• 1-GW Expected Yield (Odds-Adjusted): {projected_starting_xP:.2f} pts\n"
+    locked_squad_str += f"• 4-GW Structural Horizon xP (Squad):  {macro_squad_4gw_xp:.2f} pts\n"
+    locked_squad_str += f"• Stochastic 10th Percentile Floor:    {starter_floor:.1f} pts\n"
+    locked_squad_str += f"• Stochastic 90th Percentile Ceiling:  {starter_ceiling:.1f} pts\n"
+    locked_squad_str += "================================================================================\n"
 
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
 
