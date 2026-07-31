@@ -4,13 +4,18 @@ on:
   workflow_dispatch:
     inputs:
       manual_trigger:
-        description: 'Select execution type'
+        description: 'Run Type'
         required: true
-        default: 'pre_gameweek_deadline'
+        default: 'auto'
         type: choice
         options:
+          - auto
           - pre_gameweek_deadline
           - post_gameweek_review
+      xmins_input:
+        description: 'xMins Overrides (e.g., Haaland:0, Saka:45)'
+        required: false
+        type: string
 
 jobs:
   run-fpl-pipeline:
@@ -36,7 +41,8 @@ jobs:
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           MANUAL_TRIGGER: ${{ github.event.inputs.manual_trigger }}
-          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}          
+          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }} 
+          XMINS_INPUT: ${{ github.event.inputs.xmins_input }}
         run: python fpl_bot.py
 
       - name: Run Ensemble Comparison
