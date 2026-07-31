@@ -206,3 +206,37 @@ def get_base_ev(p, xmins_overrides, weights=None):
     final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
     
     return final_ev
+
+def get_macro_ev(p, team_avg_fdr, weights=None, xmins_overrides=None):
+    """
+    Calculates a 4-gameweek macro EV horizon with variance penalty & FDR scaling.
+    Uses the universal get_base_ev model.
+    """
+    if weights is None:
+        weights = {}
+    if xmins_overrides is None:
+        xmins_overrides = {}
+
+    # 1. Base EV calculation using central function
+    base_ev = get_base_ev(p, xmins_overrides, weights)
+    if base_ev <= 0.0:
+        return 0.0
+
+    # 2. Resolve expected minutes safely
+    pid_str = str(p.get("id"))
+    if pid_str in xmins_overrides:
+        xmins = float(xmins_overrides[pid_str])
+    else:
+        xmins = estimate_xmins(p)
+
+    # 3. Apply variance penalty across 4-GW horizon
+    variance_penalty = get_variance_penalty(xmins)
+    ev_4gw = (base_ev * variance_penalty) * 4.0
+
+    # 4. Apply Team FDR multiplier
+    team_id = p.get("team_id")
+    avg_fdr = team_avg_fdr.get(team_id, 3.0) if team_avg_fdr else 3.0
+    fdr_impact = weights.get("fdr_impact_factor", 0.10)
+    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
+
+    return ev_4gw * fdr_multiplier
