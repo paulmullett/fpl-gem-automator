@@ -581,11 +581,15 @@ def get_fpl_data():
         locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
-    
-    print("Saka EV:", get_base_ev(players[SAKA_ID], weights, xmins_overrides))
-    print("B.Fernandes EV:", get_base_ev(players[BRUNO_ID], weights, xmins_overrides))
-    print("Gabriel EV:", get_base_ev(players[GABRIEL_ID], weights, xmins_overrides))
-    print("Kinsky EV:", get_base_ev(players[KINSKY_ID], weights, xmins_overrides))
+
+    # --- DEBUG: SPECIFIC PLAYER EV AUDIT ---
+    debug_names = ["Saka", "Fernandes", "Gabriel", "Kinsky", "Raya", "Haaland"]
+    print("\n--- DEBUG: PLAYER EV AUDIT ---")
+    for p in players.values():
+        if any(name.lower() in p["name"].lower() for name in debug_names):
+            ev = get_base_ev(p, weights, xmins_overrides)
+            print(f"{p['name']} ({p['team']}) - £{p['cost']}m | 1-GW EV: {ev:.3f} | xGI: {p['xgi_90']} | xGC: {p['xgc_90']}")
+    print("------------------------------\n")
 
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
 
