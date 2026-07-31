@@ -17,7 +17,8 @@ from fpl_funcs import (
     get_macro_ev,
     get_ensemble_ev,
     normalize_player,
-    calculate_dynamic_bench_discount
+    calculate_dynamic_bench_discount,
+    evaluate_chip_thresholds
 )
 from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
@@ -492,6 +493,12 @@ def get_fpl_data():
     if transfer_plan:
         locked_squad_str += "\n### MULTI-PERIOD TRANSFER TREE (MPO)\n"
         locked_squad_str += "\n".join(transfer_plan) + "\n"
+
+    # --- AUTOMATED CHIP STRATEGY EVALUATION ---
+    chip_recommendations = evaluate_chip_thresholds(starters, bench, ev_matrix, ACTIVE_CHIP)
+    locked_squad_str += "\n### ALGORITHMIC CHIP RECOMMENDATIONS\n"
+    for rec in chip_recommendations:
+        locked_squad_str += f"• {rec}\n"
 
     # --- SQUAD HEALTH & VARIANCE REPORT (SQUAD COMMAND CENTER) ---
     macro_squad_4gw_xp = sum(get_macro_ev(p, team_avg_fdr, weights, xmins_overrides) for p in optimal_squad)
