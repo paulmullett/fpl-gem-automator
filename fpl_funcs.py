@@ -356,3 +356,40 @@ def get_ensemble_ev(p, xmins_overrides=None, market_data=None, weights=None):
     
     # 4. Final Blend
     return (0.70 * ev_a) + (0.30 * ev_b)
+
+def evaluate_chip_thresholds(starters, bench, ev_matrix, active_chip):
+    """
+    Evaluates current squad projections against mathematical thresholds 
+    to autonomously recommend optimal chip deployment.
+    """
+    if active_chip and active_chip != "NONE":
+        return [f"CHIP ACTIVE: {active_chip}"]
+
+    recommendations = []
+
+    # 1. Bench Boost Threshold
+    # Mathematically viable when the 4 bench players project a combined > 12.0 EV 
+    # without requiring transfer hits (-4) to facilitate it.
+    bench_ev = sum(ev_matrix[p["id"]][0] for p in bench)
+    if bench_ev >= 12.0:
+        recommendations.append(f"BENCH BOOST THRESHOLD MET: Bench reserves project an elite {bench_ev:.1f} combined xP.")
+
+    # 2. Triple Captain Threshold
+    # Requires a single player to project > 8.5 EV in a single Gameweek.
+    # This mathematically filters out Single Gameweeks and reserves the chip for elite DGW assets.
+    best_starter = max(starters, key=lambda p: ev_matrix[p["id"]][0])
+    best_ev = ev_matrix[best_starter["id"]][0]
+    if best_ev >= 8.5:
+        recommendations.append(f"TRIPLE CAPTAIN THRESHOLD MET: {best_starter['name']} projects a massive {best_ev:.1f} xP ceiling.")
+
+    # 3. Free Hit / Structural Decay Heuristic
+    # Triggered when starting XI drops below 9 active players or projected starting XI EV falls into critical distress.
+    active_starters = len([p for p in starters if ev_matrix[p["id"]][0] >= 2.0])
+    starting_ev = sum(ev_matrix[p["id"]][0] for p in starters)
+    if active_starters <= 8 or starting_ev <= 35.0:
+        recommendations.append(f"FREE HIT / WILDCARD WARNING: Squad decay detected. Only {active_starters} viable starters. 1-GW EV is critical ({starting_ev:.1f} xP).")
+
+    if not recommendations:
+        recommendations.append("Hold all chips. No mathematical variance thresholds met for the current gameweek.")
+
+    return recommendations
