@@ -29,6 +29,7 @@ FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 XMINS_INPUT = os.environ.get("XMINS_INPUT", "")
 ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
+RISK_POSTURE = os.environ.get("RISK_POSTURE", "NEUTRAL")
 STATE_FILE_PATH = "fpl_state.json"
 
 UEFA_TEAMS = {"MCI", "ARS", "LIV", "AVL", "MUN", "NEW", "CHE", "TOT", "SUN"}
@@ -380,7 +381,8 @@ def get_fpl_data():
         total_liquid_budget - required_bank_reservation, 
         free_transfers, 
         bench_discount,
-        horizons=4
+        horizons=4,
+        risk_posture=RISK_POSTURE
     )
 
     # 4. Execute Phase 2: Micro-Optimization (Starting XI & Captaincy Selection for t=0)
@@ -395,7 +397,14 @@ def get_fpl_data():
     for p in optimal_squad:
         ev_1gw = ev_matrix[p["id"]][0]
         ownership = p.get("own", 0.0) / 100.0
-        rank_threat_gravity = (ev_1gw * (ownership ** 2) * 0.75)
+        
+        if RISK_POSTURE == "SHIELD":
+            rank_threat_gravity = (ev_1gw * (ownership ** 2) * 1.50)
+        elif RISK_POSTURE == "CHASE":
+            rank_threat_gravity = -(ev_1gw * ownership * 0.50)
+        else:
+            rank_threat_gravity = (ev_1gw * (ownership ** 2) * 0.75)
+            
         sub_objective.append( (ev_1gw * s_vars[p["id"]]) + ((ev_1gw * cap_mult + rank_threat_gravity) * c_vars[p["id"]]) )
         
     sub_prob += pulp.lpSum(sub_objective)
