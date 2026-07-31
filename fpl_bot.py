@@ -581,6 +581,11 @@ def get_fpl_data():
         locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
     
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n"
+    
+    print("Saka EV:", get_base_ev(players[SAKA_ID], weights, xmins_overrides))
+    print("B.Fernandes EV:", get_base_ev(players[BRUNO_ID], weights, xmins_overrides))
+    print("Gabriel EV:", get_base_ev(players[GABRIEL_ID], weights, xmins_overrides))
+    print("Kinsky EV:", get_base_ev(players[KINSKY_ID], weights, xmins_overrides))
 
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
 
@@ -698,16 +703,12 @@ def main():
         sys.exit(1)
         
     content = response.text if response and response.text else ""
-    print(f"--- GEMINI RESPONSE RECEIVED ({len(content)} characters) ---")
-    print("Saka EV:", get_base_ev(players[SAKA_ID], weights, xmins_overrides))
-    print("B.Fernandes EV:", get_base_ev(players[BRUNO_ID], weights, xmins_overrides))
-    print("Gabriel EV:", get_base_ev(players[GABRIEL_ID], weights, xmins_overrides))
-    print("Kinsky EV:", get_base_ev(players[KINSKY_ID], weights, xmins_overrides))
     
     if not content:
         print("ERROR: Gemini returned an empty response string.")
         sys.exit(1)
-        
+
+    print(f"--- GEMINI RESPONSE RECEIVED ({len(content)} characters) ---")
     send_to_discord(DISCORD_WEBHOOK_URL, content)
     print("--- DISCORD DELIVERY COMPLETE ---")
 
