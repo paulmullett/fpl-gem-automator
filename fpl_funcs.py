@@ -295,6 +295,32 @@ def get_macro_ev(p, team_avg_fdr, weights=None, xmins_overrides=None):
     fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
 
     return ev_4gw * fdr_multiplier
+    
+def calculate_dynamic_bench_discount(starters, xmins_overrides=None):
+    """
+    Calculates dynamic bench discount based on the expected rotation risk of starters.
+    Baseline is 0.01, scaling up to 0.20 as starter xMins drop.
+    """
+    if not starters:
+        return 0.01
+        
+    if xmins_overrides is None:
+        xmins_overrides = {}
+
+    total_rotation_risk = 0.0
+    for p in starters:
+        pid_str = str(p.get("id"))
+        if pid_str in xmins_overrides:
+            xmins = float(xmins_overrides[pid_str])
+        else:
+            xmins = estimate_xmins(p)
+            
+        risk = max(0.0, (90.0 - xmins) / 90.0)
+        total_rotation_risk += risk
+
+    # Base discount of 0.01 + 0.03 per full player expected missing
+    dynamic_discount = 0.01 + (total_rotation_risk * 0.03)
+    return round(min(0.20, dynamic_discount), 4)
 
 def get_ensemble_ev(p, xmins_overrides=None, market_data=None, weights=None):
     """
