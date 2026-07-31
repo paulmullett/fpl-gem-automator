@@ -34,8 +34,9 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           MANUAL_TRIGGER: ${{ github.event.inputs.manual_trigger }}
-          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}
+          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }}          
         run: python fpl_bot.py
 
       - name: Run Ensemble Comparison
