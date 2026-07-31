@@ -7,6 +7,7 @@ import math
 from google import genai
 from google.genai import types
 from ddgs import DDGS
+
 # combined functions
 from fpl_funcs import (
     estimate_xmins,
@@ -14,6 +15,7 @@ from fpl_funcs import (
     get_gameweek_state,
     get_base_ev,
     get_macro_ev,
+    get_ensemble_ev,
     normalize_player
 )
 
