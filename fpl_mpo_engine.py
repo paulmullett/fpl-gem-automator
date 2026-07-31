@@ -1,6 +1,6 @@
 import pulp
 
-def solve_multi_period_model(players_dict, ev_matrix, current_squad_ids, current_bank, free_transfers_avail, bench_discount=0.01, horizons=4):
+def solve_multi_period_model(players_dict, ev_matrix, current_squad_ids, current_bank, free_transfers_avail, bench_discount=0.01, horizons=4, risk_posture="NEUTRAL"):
     """
     True Multi-Period Optimization (MPO) with Transfer Trees.
     Solves across horizons (t = 0 to 3) to find the optimal transfer sequence.
@@ -30,9 +30,18 @@ def solve_multi_period_model(players_dict, ev_matrix, current_squad_ids, current
             p = players_dict[i]
             ev = ev_matrix[i][t]
             
-            # Risk Posture: Top 10k EO Shielding
+            # Risk Posture: Top 10k EO Shielding vs. Differential Chasing
             ownership = p.get("own", 0.0) / 100.0
-            rank_gravity = (ev * (ownership ** 2) * 0.75)
+            
+            if risk_posture == "SHIELD":
+                # Heavily penalize missing highly-owned players (protect rank)
+                rank_gravity = (ev * (ownership ** 2) * 1.50)
+            elif risk_posture == "CHASE":
+                # Penalize highly-owned players, reward low-owned differentials (hunt rank)
+                rank_gravity = -(ev * ownership * 0.50)
+            else:
+                # Standard structural baseline
+                rank_gravity = (ev * (ownership ** 2) * 0.75)
             
             # Price Momentum Matrix
             trans_in_ev = p.get("transfers_in_event", 0)
