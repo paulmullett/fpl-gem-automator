@@ -1,6 +1,8 @@
 #Combined re-used functions and operations
 import math
 
+from typing import Dict, Any, Optional
+
 # safe float
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
