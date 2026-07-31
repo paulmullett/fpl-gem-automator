@@ -295,3 +295,34 @@ def get_macro_ev(p, team_avg_fdr, weights=None, xmins_overrides=None):
     fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
 
     return ev_4gw * fdr_multiplier
+
+def get_ensemble_ev(p, xmins_overrides=None, market_data=None, weights=None):
+    """
+    Blends structural EV (Base) with momentum EV (Form/EP).
+    Applies live bookmaker odds (market_data) to the structural EV if provided.
+    """
+    if xmins_overrides is None:
+        xmins_overrides = {}
+
+    # 1. Structural EV (from central get_base_ev)
+    ev_a = get_base_ev(p, xmins_overrides, weights)
+    
+    # 2. Market Odds Adjustments
+    if market_data and p.get("team") in market_data:
+        m_metrics = market_data[p.get("team")]
+        pos_id = p.get("pos_id", 3)
+        
+        if pos_id in [1, 2]:
+            market_cs_mult = m_metrics.get("cs_prob", 0.35) / 0.35
+            ev_a *= (0.75 + (0.25 * market_cs_mult))
+        else:
+            market_xg_mult = m_metrics.get("xG", 1.35) / 1.35
+            ev_a *= (0.75 + (0.25 * market_xg_mult))
+
+    # 3. Momentum EV
+    form = _safe_float(p.get("form"), 0.0)
+    ep = _safe_float(p.get("ep_next"), 0.0)
+    ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
+    
+    # 4. Final Blend
+    return (0.70 * ev_a) + (0.30 * ev_b)
