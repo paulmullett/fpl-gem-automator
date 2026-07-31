@@ -16,6 +16,15 @@ on:
         description: 'xMins Overrides (e.g., Haaland:0, Saka:45)'
         required: false
         type: string
+      risk_posture:
+        description: 'Risk Posture (SHIELD, NEUTRAL, CHASE)'
+        required: true
+        default: 'NEUTRAL'
+        type: choice
+        options:
+          - NEUTRAL
+          - SHIELD
+          - CHASE
 
 jobs:
   run-fpl-pipeline:
@@ -43,4 +52,5 @@ jobs:
           MANUAL_TRIGGER: ${{ github.event.inputs.manual_trigger }}
           ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }} 
           XMINS_INPUT: ${{ github.event.inputs.xmins_input }}
+          RISK_POSTURE: ${{ github.event.inputs.risk_posture }}
         run: python fpl_bot.py
