@@ -12,10 +12,6 @@ on:
           - auto
           - pre_gameweek_deadline
           - post_gameweek_review
-      xmins_input:
-        description: 'xMins Overrides (e.g., Haaland:0, Saka:45)'
-        required: false
-        type: string
       risk_posture:
         description: 'Risk Posture (SHIELD, NEUTRAL, CHASE)'
         required: true
@@ -25,6 +21,21 @@ on:
           - NEUTRAL
           - SHIELD
           - CHASE
+      active_chip:
+        description: 'Play a Chip this Gameweek?'
+        required: true
+        default: 'NONE'
+        type: choice
+        options:
+          - NONE
+          - WILDCARD
+          - FREE_HIT
+          - BENCH_BOOST
+          - TRIPLE_CAPTAIN
+      xmins_input:
+        description: 'xMins Overrides (e.g., Haaland:0, Saka:45)'
+        required: false
+        type: string
 
 jobs:
   run-fpl-pipeline:
