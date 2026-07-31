@@ -44,10 +44,3 @@ jobs:
           ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }} 
           XMINS_INPUT: ${{ github.event.inputs.xmins_input }}
         run: python fpl_bot.py
-
-      - name: Run Ensemble Comparison
-        env:
-          FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
-          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-        run: python fpl_compare.py
