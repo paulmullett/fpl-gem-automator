@@ -16,7 +16,7 @@ from fpl_funcs import (
     get_base_ev,
     get_macro_ev,
     get_ensemble_ev,
-    normalize_player
+    normalize_player,
     calculate_dynamic_bench_discount
 )
 from fpl_odds_engine import get_market_adjustments
