@@ -9,11 +9,13 @@ from fpl_mpo_engine import solve_multi_period_model
 from fpl_monte_carlo import run_monte_carlo_simulations
 
 # combined functions
+
 from fpl_funcs import (
     estimate_xmins, 
     calculate_tier1_translation_factor,
     get_gameweek_state,
     get_base_ev,
+    get_ensemble_ev,
     normalize_player,
     _safe_float
 )
@@ -50,41 +52,6 @@ def get_user_current_squad(team_id):
     except Exception as e:
         print(f"Could not fetch user picks for team {team_id}: {e}")
     return []
-
-# xmins Moved to fpl_funcs.py
-
-# league translations moved to fpl_funcs.py
-
-# Base EV moved to fpl_funcs.pydef 
-
-def get_ensemble_ev(p, xmins_overrides, market_data=None, weights=None):
-    """
-    Blends structural EV (Base) with momentum EV (Form/EP).
-    Applies live bookmaker odds (market_data) to the structural EV if provided.
-    """
-    # 1. Structural EV (from our unified get_base_ev)
-    ev_a = get_base_ev(p, xmins_overrides, weights)
-    
-    # 2. Market Odds Adjustments (Safe Copilot Logic)
-    if market_data and p.get("team") in market_data:
-        m_metrics = market_data[p.get("team")]
-        pos_id = p.get("pos_id", 3)
-        
-        if pos_id in [1, 2]:
-            market_cs_mult = m_metrics.get("cs_prob", 0.35) / 0.35
-            ev_a *= (0.75 + (0.25 * market_cs_mult))
-        else:
-            market_xg_mult = m_metrics.get("xG", 1.35) / 1.35
-            ev_a *= (0.75 + (0.25 * market_xg_mult))
-
-    # 3. Momentum EV (Safe Parsing)
-    form = _safe_float(p.get("form"), 0.0)
-    ep = _safe_float(p.get("ep_next"), 0.0)
-        
-    ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
-    
-    # 4. Final Blend
-    return (0.70 * ev_a) + (0.30 * ev_b)
 
 def solve_model(players_dict, market_data, use_ensemble=False):
     prob = pulp.LpProblem(f"FPL_{'Ensemble' if use_ensemble else 'Baseline'}", pulp.LpMaximize)
