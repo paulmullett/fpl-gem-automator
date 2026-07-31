@@ -17,6 +17,7 @@ from fpl_funcs import (
     get_macro_ev,
     get_ensemble_ev,
     normalize_player
+    calculate_dynamic_bench_discount
 )
 from fpl_odds_engine import get_market_adjustments
 
@@ -220,10 +221,13 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     valid_ids = list(players_dict.keys())
     
     # Aggressive override to prevent budget bleeding onto the bench
+    # Dynamic Probabilistic Bench Weighting
     if active_chip == "BENCH_BOOST":
         bench_discount = 1.0
     else:
-        bench_discount = 0.01 
+        # Calculate risk based on initial candidate starters or default baseline
+        starter_candidates = [players_dict[i] for i in valid_ids if players_dict[i].get("cost", 0) >= 6.0][:11]
+        bench_discount = calculate_dynamic_bench_discount(starter_candidates, xmins_overrides)
         
     captain_multiplier = 2.0 if active_chip == "TRIPLE_CAPTAIN" else 1.0
         
