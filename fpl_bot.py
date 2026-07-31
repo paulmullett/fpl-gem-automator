@@ -10,7 +10,8 @@ from ddgs import DDGS
 # combined functions
 from fpl_funcs import (
     estimate_xmins, 
-    get_gameweek_state
+    get_gameweek_state,
+    get_macro_ev
 )
 
 # 1. Environment & Pre-Flight Check
@@ -276,23 +277,6 @@ def get_base_ev(p, weights, xmins_overrides):
     final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
     
     return final_ev
-
-def get_macro_ev(p, team_avg_fdr, weights, xmins_overrides):
-    base_ev = get_base_ev(p, weights, xmins_overrides)
-    if base_ev <= 0.0:
-        return 0.0
-    
-    pid_str = str(p["id"])
-    xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-    variance_penalty = get_variance_penalty(xmins)
-    
-    ev_4gw = (base_ev * variance_penalty) * 4.0
-    
-    avg_fdr = team_avg_fdr.get(p["team_id"], 3.0)
-    fdr_impact = weights.get("fdr_impact_factor", 0.10)
-    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
-    
-    return ev_4gw * fdr_multiplier
 
 def check_european_congestion_flags(starters, fixtures_data, target_gw):
     flags = []
