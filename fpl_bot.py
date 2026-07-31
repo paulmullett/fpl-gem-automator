@@ -9,9 +9,12 @@ from google.genai import types
 from ddgs import DDGS
 # combined functions
 from fpl_funcs import (
-    estimate_xmins, 
+    estimate_xmins,
+    calculate_tier1_translation_factor,
     get_gameweek_state,
-    get_macro_ev
+    get_base_ev,
+    get_macro_ev,
+    normalize_player
 )
 
 # 1. Environment & Pre-Flight Check
@@ -200,83 +203,6 @@ def get_live_fpl_news():
     except Exception as e:
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
-
-# 4. Continuous Portfolio Risk-Adjusted Engine
-# Moved to fpl_funcs.py
-
-def get_variance_penalty(xmins):
-    return 0.8 + (min(xmins, 90.0) / 90.0) * 0.2
-
-def get_base_ev(p, weights, xmins_overrides):
-    pid_str = str(p["id"])
-    if pid_str in xmins_overrides:
-        xmins = float(xmins_overrides[pid_str])
-    else:
-        xmins = estimate_xmins(p)
-        
-    if xmins < 5.0:
-        return 0.0
-        
-    try: ep = float(p.get("ep_next", 0.0))
-    except: ep = 0.0
-    try: xgi = float(p.get("xgi_90", 0.0))
-    except: xgi = 0.0
-    try: xgc = float(p.get("xgc_90", 0.0))
-    except: xgc = 0.0
-    try: cost = float(p.get("cost", 0.0))
-    except: cost = 0.0
-    try: own = float(p.get("own", 0.0))
-    except: own = 0.0
-
-    pos_id = p["pos_id"]
-    if xgc <= 0.0:
-        xgc = 1.35  
-
-    mins_factor = xmins / 90.0
-    
-    # 1. Bayesian Shrinkage (Filters out extreme xGI anomalies from low-minute players)
-    if pos_id == 1: baseline_xgi = 0.01
-    elif pos_id == 2: baseline_xgi = 0.08
-    elif pos_id == 3: baseline_xgi = 0.25
-    elif pos_id == 4: baseline_xgi = 0.35
-    else: baseline_xgi = 0.10
-    
-    cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
-    cost_premium = max(0.0, cost - cost_threshold)
-    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
-    shrunken_xgi = (xgi * confidence) + (baseline_xgi * (1.0 - confidence))
-
-    # 2. Logistic Regression (Sigmoid) Appearance Points
-    prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
-    prob_1_59 = (1.0 - prob_60)
-    app_points = (prob_60 * 2.0) + (prob_1_59 * 1.0)
-
-    # 3. Poisson Clean Sheet Engine — STRICTLY gated by prob_60 (60-minute rule)
-    team_xga = xgc * mins_factor
-    cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
-    
-    if pos_id in [1, 2]: 
-        cs_points = (cs_prob * 4.0) * prob_60
-    elif pos_id == 3: 
-        cs_points = (cs_prob * 1.0) * prob_60
-    else:
-        cs_points = 0.0
-        
-    # 4. Continuous Market-Priced Finisher Curve
-    market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04) 
-    
-    if pos_id == 2: pos_mult = 4.2       
-    elif pos_id == 3: pos_mult = 4.0     
-    else: pos_mult = 3.6                      
-        
-    attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
-    
-    raw_ev = app_points + attacking_points + cs_points
-    
-    xgi_mult = weights.get("xgi_weight", 0.70)
-    final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
-    
-    return final_ev
 
 def check_european_congestion_flags(starters, fixtures_data, target_gw):
     flags = []
@@ -483,19 +409,9 @@ def get_fpl_data():
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
     players = {}
-    for p in bootstrap_data["elements"]:
-        players[p["id"]] = {
-            "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
-            "team_id": p["team"], "pos": element_types.get(p["element_type"], "UNK"),
-            "pos_id": p["element_type"], "cost": p["now_cost"] / 10.0,
-            "status": p["status"], "news": p["news"], "ep_next": str(p.get("ep_next", "0.0")),
-            "total_points": p.get("total_points", 0), "form": str(p.get("form", "0.0")),
-            "own": str(p.get("selected_by_percent", "0.0")),
-            "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
-            "xgi_90": str(p.get("expected_goal_involvements_per_90", "0.0")),
-            "xgc_90": str(p.get("expected_goals_conceded_per_90", "0.0")),
-            "cost_change_start": p.get("cost_change_start", 0)
-        }
+    for raw_p in bootstrap_data["elements"]:
+        p_norm = normalize_player(raw_p, teams, element_types)
+        players[p_norm["id"]] = p_norm
         
     market_list = []
     available_players = [p for p in players.values() if p.get("status") in ["a", "d"]]
