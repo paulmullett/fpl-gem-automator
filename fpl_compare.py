@@ -13,7 +13,9 @@ from fpl_funcs import (
     estimate_xmins, 
     calculate_tier1_translation_factor,
     get_gameweek_state,
-    get_base_ev
+    get_base_ev,
+    normalize_player,
+    _safe_float
 )
 
 # 1. Fetch the master FPL data payload FIRST
@@ -75,12 +77,9 @@ def get_ensemble_ev(p, xmins_overrides, market_data=None, weights=None):
             market_xg_mult = m_metrics.get("xG", 1.35) / 1.35
             ev_a *= (0.75 + (0.25 * market_xg_mult))
 
-    # 3. Momentum EV (Original Explicit Math)
-    try:
-        form = float(p.get("form", 0.0))
-        ep = float(p.get("ep_next", 0.0))
-    except (ValueError, TypeError):
-        form, ep = 0.0, 0.0
+    # 3. Momentum EV (Safe Parsing)
+    form = _safe_float(p.get("form"), 0.0)
+    ep = _safe_float(p.get("ep_next"), 0.0)
         
     ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
     
@@ -211,29 +210,13 @@ def send_to_discord(base_xp, ens_xp, mpo_xp, mc_results, base_starters, ens_star
         print(f"Failed to send Discord webhook: {e}")
 
 def run_comparison():
-    teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
-    element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
+    teams_map = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
+    element_types_map = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
 
     players = {}
-    for p in bootstrap_data["elements"]:
-        est_mins = estimate_xmins(p)
-        players[p["id"]] = {
-        "id": p["id"], "name": p["web_name"], "team": teams.get(p["team"], "UNK"),
-        "team_id": p["team"], "pos": element_types.get(p["element_type"], "UNK"),
-        "pos_id": p["element_type"], "cost": p["now_cost"] / 10.0,
-        "status": p["status"], "news": p["news"], "ep_next": str(p.get("ep_next", "0.0")),
-        "total_points": p.get("total_points", 0), "form": str(p.get("form", "0.0")),
-        "own": str(p.get("selected_by_percent", "0.0")),
-        "chance_of_playing_next_round": str(p.get("chance_of_playing_next_round", "")),
-        "xgi_90": str(p.get("expected_goal_involvements_per_90", "0.0")),
-        "xgc_90": str(p.get("expected_goals_conceded_per_90", "0.0")),
-        "cost_change_start": p.get("cost_change_start", 0),
-        "source_league": p.get("source_league", "Premier_League"),
-        "age": p.get("age", 25),
-        "former_team_possession_pct": p.get("former_team_possession_pct", 50.0),
-        "has_stale_pl_history": p.get("has_stale_pl_history", False),
-        "recent_european_peak": p.get("recent_european_peak", False)
-    }
+    for raw_p in bootstrap_data["elements"]:
+        p_norm = normalize_player(raw_p, teams_map, element_types_map)
+        players[p_norm["id"]] = p_norm
 
     print("Fetching live market odds adjustments...")
     market_data = get_market_adjustments()
