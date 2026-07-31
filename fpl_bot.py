@@ -530,6 +530,11 @@ def get_fpl_data():
     state["buyback_targets"] = updated_targets
     state["price_watchlist"] = price_watchlist
 
+    print("Saka EV:", get_base_ev(players[SAKA_ID], weights, xmins_overrides))
+    print("B.Fernandes EV:", get_base_ev(players[BRUNO_ID], weights, xmins_overrides))
+    print("Gabriel EV:", get_base_ev(players[GABRIEL_ID], weights, xmins_overrides))
+    print("Kinsky EV:", get_base_ev(players[KINSKY_ID], weights, xmins_overrides))
+
     starters, bench, cap, vice = solve_fpl_knapsack(
         players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, ACTIVE_CHIP
     )
