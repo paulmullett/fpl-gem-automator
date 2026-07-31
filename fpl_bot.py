@@ -18,6 +18,7 @@ from fpl_funcs import (
     get_ensemble_ev,
     normalize_player
 )
+from fpl_odds_engine import get_market_adjustments
 
 # 1. Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
@@ -214,7 +215,7 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
     return flags
 
 # 5. Execution Engine: Portfolio Optimization MILP Solver
-def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, active_chip):
+def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, active_chip, market_data=None):
     prob = pulp.LpProblem("FPL_Portfolio_Optimization", pulp.LpMaximize)
     valid_ids = list(players_dict.keys())
     
@@ -312,7 +313,7 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     
     sub_objective = []
     for p in squad_players:
-        ev_1gw = get_base_ev(p, weights, xmins_overrides) 
+        ev_1gw = get_ensemble_ev(p, xmins_overrides, market_data, weights)
         try: ownership = float(p.get("own", 0.0))
         except: ownership = 0.0
         
@@ -351,10 +352,10 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
     starters.sort(key=lambda x: x["pos_id"])
     
     bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_base_ev(x, weights, xmins_overrides), reverse=True)
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: get_ensemble_ev(x, xmins_overrides, market_data, weights), reverse=True)
     sorted_bench = bench_gk + bench_outfield
     
-    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_base_ev(x, weights, xmins_overrides), reverse=True)
+    starters_sorted_by_1gw = sorted(starters, key=lambda x: get_ensemble_ev(x, xmins_overrides, market_data, weights), reverse=True)
     vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
             
     return starters, sorted_bench, cap, vice
