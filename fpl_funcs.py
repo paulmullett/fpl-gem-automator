@@ -154,6 +154,10 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["has_stale_pl_history"] = bool(raw_p.get("has_stale_pl_history", False))
     p["recent_european_peak"] = bool(raw_p.get("recent_european_peak", False))
 
+    # Transfer momentum fields
+    p["transfers_in_event"] = int(raw_p.get("transfers_in_event") or 0)
+    p["transfers_out_event"] = int(raw_p.get("transfers_out_event") or 0)
+
     return p
 
 
