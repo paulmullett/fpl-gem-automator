@@ -362,6 +362,10 @@ def solve_fpl_knapsack(players_dict, current_squad_ids, total_budget, free_trans
 
 # 6. Main Data Pipeline & Integration
 def get_fpl_data():
+
+    print("Fetching live market odds for tactical alignment...")
+    market_data = get_market_adjustments()
+    
     headers = {"User-Agent": "FPL-Auto-Script/13.0"}
     state = load_state()
     xmins_overrides = state.get("xmins_overrides", {})
@@ -534,17 +538,17 @@ def get_fpl_data():
     state["price_watchlist"] = price_watchlist
 
     starters, bench, cap, vice = solve_fpl_knapsack(
-        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, ACTIVE_CHIP
+        players, current_squad_ids, total_liquid_budget, free_transfers, team_avg_fdr, required_bank_reservation, weights, xmins_overrides, ACTIVE_CHIP, market_data
     )
     optimal_squad = starters + bench
 
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
     mitigation_flags_str = "\n".join(european_flags) if european_flags else "[No active mitigation warning flags triggered]"
 
-    projected_starting_xP = sum(get_base_ev(p, weights, xmins_overrides) for p in starters)
+    projected_starting_xP = sum(get_ensemble_ev(p, xmins_overrides, market_data, weights) for p in starters)
     if cap:
         cap_mult = 2.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 1.0
-        projected_starting_xP += get_base_ev(cap, weights, xmins_overrides) * cap_mult
+        projected_starting_xP += get_ensemble_ev(cap, xmins_overrides, market_data, weights) * cap_mult
         
     state["pending_evaluation"] = {
         "gw": target_gw,
