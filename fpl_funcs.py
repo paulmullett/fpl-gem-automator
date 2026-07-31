@@ -1,6 +1,16 @@
 #Combined re-used functions and operations
 import math
 
+# safe float
+
+def _safe_float(v: Any, default: float = 0.0) -> float:
+    try:
+        if v is None or v == "":
+            return default
+        return float(v)
+    except Exception:
+        return default
+
 # estimated minute calculations
 
 def estimate_xmins(p):
@@ -95,6 +105,55 @@ def calculate_tier1_translation_factor(p):
 
     final_multiplier = base_coef * age_modifier * xg_scaling
     return max(0.65, min(0.98, final_multiplier))
+
+# Normalize players
+
+def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] = None,
+                     element_types_map: Optional[Dict[int, str]] = None) -> Dict[str, Any]:
+    """Return a normalized player dict with deterministic numeric types.
+
+    raw_p is an element from the FPL bootstrap 'elements' list. This function
+    coalesces field names and casts numeric fields to floats/ints as used by the
+    EV engines in the codebase.
+    """
+    p = {}
+    p["id"] = int(raw_p.get("id"))
+    p["name"] = raw_p.get("web_name") or raw_p.get("name") or "Unknown"
+    team_id = raw_p.get("team")
+    p["team_id"] = int(team_id) if team_id is not None else None
+    p["team"] = teams_map.get(team_id, "UNK") if teams_map else raw_p.get("team" , "UNK")
+    pos_id = raw_p.get("element_type") or raw_p.get("position") or raw_p.get("pos_id")
+    p["pos_id"] = int(pos_id) if pos_id is not None else 3
+    p["pos"] = element_types_map.get(p["pos_id"], "UNK") if element_types_map else raw_p.get("element_type")
+
+    p["cost"] = _safe_float(raw_p.get("now_cost") or raw_p.get("cost")) / 10.0
+    p["status"] = raw_p.get("status", "")
+    p["news"] = raw_p.get("news", "")
+
+    # Numeric fields with safe fallbacks
+    p["ep_next"] = _safe_float(raw_p.get("ep_next") or raw_p.get("ep") or 0.0)
+    p["form"] = _safe_float(raw_p.get("form") or 0.0)
+    p["total_points"] = int(raw_p.get("total_points") or 0)
+    p["own"] = _safe_float(raw_p.get("selected_by_percent") or raw_p.get("own") or 0.0)
+    p["chance_of_playing_next_round"] = raw_p.get("chance_of_playing_next_round", "")
+
+    # xGI / xGC fields — ensure sensible defaults
+    raw_xgi = raw_p.get("expected_goal_involvements_per_90")
+    p["xgi_90"] = _safe_float(raw_xgi or 0.0)
+    raw_xgc = raw_p.get("expected_goals_conceded_per_90")
+    p["xgc_90"] = _safe_float(raw_xgc or 1.35)
+
+    p["cost_change_start"] = int(raw_p.get("cost_change_start") or 0)
+
+    # Optional fields used by some routines
+    p["source_league"] = raw_p.get("source_league", "Premier_League")
+    p["age"] = int(raw_p.get("age") or 25)
+    p["former_team_possession_pct"] = _safe_float(raw_p.get("former_team_possession_pct") or 50.0)
+    p["has_stale_pl_history"] = bool(raw_p.get("has_stale_pl_history", False))
+    p["recent_european_peak"] = bool(raw_p.get("recent_european_peak", False))
+
+    return p
+
 
 # Gameweek state
 
@@ -206,6 +265,9 @@ def get_base_ev(p, xmins_overrides, weights=None):
     final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
     
     return final_ev
+
+def get_variance_penalty(xmins: float) -> float:
+    return 0.8 + (min(xmins, 90.0) / 90.0) * 0.2
 
 def get_macro_ev(p, team_avg_fdr, weights=None, xmins_overrides=None):
     """
