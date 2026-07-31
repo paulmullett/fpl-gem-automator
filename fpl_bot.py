@@ -324,10 +324,16 @@ def get_fpl_data():
 
     # 2. Build EV Matrix for all players across horizons
     ev_matrix = {}
-    valid_ids = [p["id"] for p in players.values() if p.get("status") in ["a", "d"]]
+    valid_ids = list(players.keys())
     for pid in valid_ids:
         p = players[pid]
         ev_matrix[pid] = [0.0] * 4
+        
+        # Zero out EV for injured or suspended players, but keep them in the matrix
+        # so the solver can mathematically track them and legally transfer them out.
+        if p.get("status") not in ["a", "d"]:
+            continue
+            
         t_id = p["team_id"]
         
         # t=0: Live Ensemble EV (Bookmaker Odds + Momentum)
