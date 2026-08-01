@@ -6,7 +6,6 @@ import math
 from typing import Dict, Any, Optional
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
-    """Safely converts input values to float, defaulting on None or ValueError."""
     try:
         if v is None or v == "": return default
         return float(v)
@@ -130,10 +129,32 @@ def get_gameweek_state(bootstrap_data: Dict[str, Any]):
     active_gw = current_gw_id or (target_gw if target_gw > 1 else 1)
     return active_gw, target_gw
 
+def get_live_price_deltas(players_dict: dict) -> dict:
+    """
+    Attempts to fetch live price predictions from a market aggregator JSON.
+    Falls back to a Net Transfer heuristic proxy if the API is unreachable.
+    """
+    deltas = {}
+    try:
+        # User Configuration: Inject live aggregator endpoint here (e.g. fplstatistics / LiveFPL)
+        # resp = requests.get("https://your-market-api.com/prices", timeout=2)
+        # if resp.status_code == 200: ...
+        raise ConnectionError("No external API provided, defaulting to Net Transfer heuristic.")
+    except Exception:
+        # Robust Fallback: Model market movement using FPL API net transfers
+        for pid, p in players_dict.items():
+            net_transfers = p.get("transfers_in_event", 0) - p.get("transfers_out_event", 0)
+            if net_transfers > 120000:
+                deltas[pid] = 0.1
+            elif net_transfers < -120000:
+                deltas[pid] = -0.1
+            else:
+                deltas[pid] = 0.0
+    return deltas
+
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                 weights: Optional[Dict[str, float]] = None,
                 market_data: Optional[Dict[str, Any]] = None) -> float:
-    """Calculates Base EV using dynamic Market-Implied Attacking Distributions."""
     if isinstance(xmins_overrides, dict) and "xgi_weight" in xmins_overrides and weights is None:
         weights = xmins_overrides
         xmins_overrides = {}
@@ -154,10 +175,8 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     pos_id = p.get("pos_id", 3)
     mins_factor = xmins / 90.0
 
-    # MARKET-IMPLIED DISTRIBUTION: Replaces static heuristics with live betting lines
     team_name = p.get("team", "")
     team_xg_base = market_data[team_name].get("xG", 1.5) if market_data and team_name in market_data else 1.5
-    
     baseline_xgi = team_xg_base * 0.01 if pos_id == 1 else (team_xg_base * 0.06 if pos_id == 2 else (team_xg_base * 0.18 if pos_id == 3 else team_xg_base * 0.30))
     
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
@@ -197,39 +216,23 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
 def get_variance_penalty(xmins: float) -> float:
     return 0.8 + (min(xmins, 90.0) / 90.0) * 0.2
 
-def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float], 
-                 weights: Optional[Dict[str, float]] = None, 
-                 xmins_overrides: Optional[Dict[str, float]] = None,
-                 market_data: Optional[Dict[str, Any]] = None,
-                 horizons: int = 8) -> float:
-    if weights is None: weights = {}
-    if xmins_overrides is None: xmins_overrides = {}
-
-    base_ev = get_base_ev(p, xmins_overrides, weights, market_data)
-    if base_ev <= 0.0: return 0.0
-
-    pid_str = str(p.get("id"))
-    xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-
-    variance_penalty = get_variance_penalty(xmins)
-    ev_macro = (base_ev * variance_penalty) * float(horizons)
-
-    team_id = p.get("team_id")
-    avg_fdr = team_avg_fdr.get(team_id, 3.0) if team_avg_fdr and team_id in team_avg_fdr else 3.0
-    fdr_impact = weights.get("fdr_impact_factor", 0.10)
-    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
-
-    return ev_macro * fdr_multiplier
-
 def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                     market_data: Optional[Dict[str, Any]] = None, 
-                    weights: Optional[Dict[str, float]] = None) -> float:
+                    weights: Optional[Dict[str, float]] = None,
+                    risk_posture: str = "NEUTRAL") -> float:
     if xmins_overrides is None: xmins_overrides = {}
     ev_a = get_base_ev(p, xmins_overrides, weights, market_data)
     
+    # 2. STOCHASTIC PRE-SOLVE VARIANCE GATING
+    pos_id = p.get("pos_id", 3)
+    sigma = ev_a * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
+    if risk_posture == "SHIELD":
+        ev_a -= (sigma * 0.15)
+    elif risk_posture == "CHASE":
+        ev_a += (sigma * 0.15)
+    
     if market_data and p.get("team") in market_data:
         m_metrics = market_data[p.get("team")]
-        pos_id = p.get("pos_id", 3)
         if pos_id in [1, 2]:
             market_cs_mult = m_metrics.get("cs_prob", 0.35) / 0.35
             ev_a *= (0.75 + (0.25 * market_cs_mult))
@@ -241,7 +244,39 @@ def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float
     ep = _safe_float(p.get("ep_next"), 0.0)
     ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
     
-    return (0.70 * ev_a) + (0.30 * ev_b)
+    return max(0.0, (0.70 * ev_a) + (0.30 * ev_b))
+
+def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float], 
+                 weights: Optional[Dict[str, float]] = None, 
+                 xmins_overrides: Optional[Dict[str, float]] = None,
+                 market_data: Optional[Dict[str, Any]] = None,
+                 horizons: int = 8,
+                 risk_posture: str = "NEUTRAL") -> float:
+    if weights is None: weights = {}
+    if xmins_overrides is None: xmins_overrides = {}
+
+    base_ev = get_base_ev(p, xmins_overrides, weights, market_data)
+    pos_id = p.get("pos_id", 3)
+    sigma = base_ev * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
+    
+    if risk_posture == "SHIELD":
+        base_ev -= (sigma * 0.15)
+    elif risk_posture == "CHASE":
+        base_ev += (sigma * 0.15)
+        
+    if base_ev <= 0.0: return 0.0
+
+    pid_str = str(p.get("id"))
+    xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+    variance_penalty = get_variance_penalty(xmins)
+    ev_macro = (base_ev * variance_penalty) * float(horizons)
+
+    team_id = p.get("team_id")
+    avg_fdr = team_avg_fdr.get(team_id, 3.0) if team_avg_fdr and team_id in team_avg_fdr else 3.0
+    fdr_impact = weights.get("fdr_impact_factor", 0.10)
+    fdr_multiplier = 1.0 + ((3.0 - avg_fdr) * fdr_impact)
+
+    return ev_macro * fdr_multiplier
 
 def evaluate_chip_thresholds(starters: list, bench: list, ev_matrix: dict, active_chip: str) -> list:
     if active_chip and active_chip != "NONE": return [f"CHIP ACTIVE: {active_chip}"]
