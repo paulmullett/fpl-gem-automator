@@ -8,13 +8,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
                             horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
                             w_sub_1: float = 0.05):
-    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and HiGHS Time Limits."""
+    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and Solver Fallback."""
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
     gameweeks = list(range(horizons))
     
     # --- STRATIFIED BUCKET PRUNING UNIVERSE ENGINE ---
-    # Prevents combinatorial explosion while guaranteeing price-floor fodder (£4.0m/£4.5m) is never excluded.
     current_set = set(current_squad_ids) if current_squad_ids else set()
     
     by_pos = {1: [], 2: [], 3: [], 4: []}
@@ -159,9 +158,26 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
             model += ft[t] <= 5  
 
-    model.solve(pulp.getSolver('HiGHS', timeLimit=60, msg=False))
+    # --- ROBUST SOLVER EXECUTION WITH FALLBACK ---
+    solver_success = False
+    try:
+        highs_solver = pulp.getSolver('HiGHS', timeLimit=60, msg=False)
+        model.solve(highs_solver)
+        if model.status in [pulp.LpStatusOptimal, pulp.LpStatusNotSolved]:
+            solver_success = True
+    except Exception as e:
+        print(f"MPO SOLVER: HiGHS solver execution failed or unavailable ({e}). Falling back to CBC...")
+
+    if not solver_success:
+        cbc_solver = pulp.PULP_CBC_CMD(timeLimit=60, msg=False)
+        model.solve(cbc_solver)
+    # ---------------------------------------------
     
-    optimal_squad = [players_dict[i] for i in valid_ids if squad[i, 0].varValue and squad[i, 0].varValue > 0.5]
+    optimal_squad = []
+    for i in valid_ids:
+        val = squad[i, 0].varValue
+        if val is not None and val > 0.5:
+            optimal_squad.append(players_dict[i])
     
     transfer_plan = []
     if current_squad_ids and len(current_squad_ids) == 15 and free_transfers_avail != "Unlimited":
