@@ -30,7 +30,6 @@ from fpl_funcs import (
     get_macro_ev,
     get_ensemble_ev,
     normalize_player,
-    calculate_dynamic_bench_discount,
     evaluate_chip_thresholds
 )
 from fpl_odds_engine import get_market_adjustments
@@ -333,12 +332,9 @@ def get_fpl_data():
             ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier)
 
     # Phase 1: MPO Solver Execution
-    starter_candidates = [players[i] for i in valid_ids if players[i].get("cost", 0) >= 6.0][:11]
-    bench_discount = 1.0 if ACTIVE_CHIP == "BENCH_BOOST" else calculate_dynamic_bench_discount(starter_candidates, xmins_overrides)
-
     optimal_squad, transfer_plan = solve_multi_period_model(
         players, ev_matrix, current_squad_ids, total_liquid_budget, 
-        free_transfers, bench_discount, horizons=4, risk_posture=RISK_POSTURE
+        free_transfers, active_chip=ACTIVE_CHIP, horizons=4, risk_posture=RISK_POSTURE
     )
 
     # Phase 2: Micro-Optimization Execution
