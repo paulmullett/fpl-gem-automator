@@ -8,13 +8,11 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
                             horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
                             w_sub_1: float = 0.05, w_sub_2: float = 0.01, planned_chips: dict = None):
-    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and Future Chip States."""
     if planned_chips is None: planned_chips = {}
     
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     gameweeks = list(range(horizons))
     
-    # --- STRATIFIED BUCKET PRUNING UNIVERSE ENGINE ---
     current_set = set(current_squad_ids) if current_squad_ids else set()
     by_pos = {1: [], 2: [], 3: [], 4: []}
     for pid, p in players_dict.items():
@@ -31,7 +29,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
         selected_pids.update(cheapest[:8])
         
     valid_ids = list(selected_pids)
-    # -------------------------------------------------
     
     squad = pulp.LpVariable.dicts("squad", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     starter = pulp.LpVariable.dicts("starter", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
@@ -143,9 +140,7 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
         else:
             model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([get_future_sell_price(players_dict[i], t-1) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
             
-            # 3. FUTURE-NODE CHIP STATE MAPPING
             if planned_chips.get(t) == "WILDCARD":
-                # Wildcard completely severs squad connection from t-1 without penalty.
                 model += pulp.lpSum([trans_in[i, t] for i in valid_ids]) == 0
                 model += pulp.lpSum([trans_out[i, t] for i in valid_ids]) == 0
                 model += hits[t] == 0
