@@ -7,28 +7,25 @@ import pulp
 def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_ids: list, 
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
                             horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
-                            w_sub_1: float = 0.05):
-    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and Solver Fallback."""
-    model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
+                            w_sub_1: float = 0.05, w_sub_2: float = 0.01, planned_chips: dict = None):
+    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and Future Chip States."""
+    if planned_chips is None: planned_chips = {}
     
+    model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     gameweeks = list(range(horizons))
     
     # --- STRATIFIED BUCKET PRUNING UNIVERSE ENGINE ---
     current_set = set(current_squad_ids) if current_squad_ids else set()
-    
     by_pos = {1: [], 2: [], 3: [], 4: []}
     for pid, p in players_dict.items():
         by_pos[p.get("pos_id", 3)].append(pid)
         
     selected_pids = set(current_set)
-    
-    # 1. Top EV selections per position across the 8-GW horizon
     pos_ev_limits = {1: 25, 2: 45, 3: 45, 4: 25}
     for pos_id, limits in pos_ev_limits.items():
         sorted_by_ev = sorted(by_pos[pos_id], key=lambda i: sum(ev_matrix[i][:horizons]), reverse=True)
         selected_pids.update(sorted_by_ev[:limits])
         
-    # 2. Price Floor Guarantees: Include 8 cheapest active players per position (sorted by price asc, EV desc)
     for pos_id in [1, 2, 3, 4]:
         cheapest = sorted(by_pos[pos_id], key=lambda i: (players_dict[i]["cost"], -sum(ev_matrix[i][:horizons])))
         selected_pids.update(cheapest[:8])
@@ -53,12 +50,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     ft = pulp.LpVariable.dicts("ft", gameweeks, lowBound=1, upBound=5, cat="Integer")
 
     objective = []
-    gamma = 0.85  # Steeper geometric decay for 8-GW horizon to balance macro vs micro planning
+    gamma = 0.85
     
     if active_chip == "BENCH_BOOST":
         w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 1.0, 1.0, 1.0, 1.0
     else:
-        w_sub_2, w_sub_3, w_sub_gk = 0.01, 0.00, 0.03
+        w_sub_3, w_sub_gk = 0.00, 0.03
 
     for t in gameweeks:
         gw_points = []
@@ -66,17 +63,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             p = players_dict[i]
             ev = ev_matrix[i][t]
             
-            if target_gw >= 3:
-                ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
-            else:
-                ownership = p.get("own", 0.0) / 100.0
+            if target_gw >= 3: ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
+            else: ownership = p.get("own", 0.0) / 100.0
                 
-            if risk_posture == "SHIELD":
-                rank_gravity = (ev * (ownership ** 2) * 1.50)
-            elif risk_posture == "CHASE":
-                rank_gravity = -(ev * ownership * 0.50)
-            else:
-                rank_gravity = (ev * (ownership ** 2) * 0.75)
+            if risk_posture == "SHIELD": rank_gravity = (ev * (ownership ** 2) * 1.50)
+            elif risk_posture == "CHASE": rank_gravity = -(ev * ownership * 0.50)
+            else: rank_gravity = (ev * (ownership ** 2) * 0.75)
             
             trans_in_ev = p.get("transfers_in_event", 0)
             trans_out_ev = p.get("transfers_out_event", 0)
@@ -91,7 +83,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                 (w_sub_gk * ev * sub_gk[i, t]) +
                 (momentum_boost * squad[i, t])
             )
-            
         objective.append((gamma ** t) * pulp.lpSum(gw_points) - (4.0 * hits[t]))
 
     model += pulp.lpSum(objective)
@@ -152,13 +143,20 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
         else:
             model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([get_future_sell_price(players_dict[i], t-1) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
             
-            for i in valid_ids:
-                model += squad[i, t] == squad[i, t-1] + trans_in[i, t] - trans_out[i, t]
-            model += pulp.lpSum([trans_in[i, t] for i in valid_ids]) <= ft[t-1] + hits[t]
-            model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
-            model += ft[t] <= 5  
+            # 3. FUTURE-NODE CHIP STATE MAPPING
+            if planned_chips.get(t) == "WILDCARD":
+                # Wildcard completely severs squad connection from t-1 without penalty.
+                model += pulp.lpSum([trans_in[i, t] for i in valid_ids]) == 0
+                model += pulp.lpSum([trans_out[i, t] for i in valid_ids]) == 0
+                model += hits[t] == 0
+                model += ft[t] == 1
+            else:
+                for i in valid_ids:
+                    model += squad[i, t] == squad[i, t-1] + trans_in[i, t] - trans_out[i, t]
+                model += pulp.lpSum([trans_in[i, t] for i in valid_ids]) <= ft[t-1] + hits[t]
+                model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
+                model += ft[t] <= 5  
 
-    # --- ROBUST SOLVER EXECUTION WITH FALLBACK ---
     solver_success = False
     try:
         highs_solver = pulp.getSolver('HiGHS', timeLimit=60, msg=False)
@@ -171,7 +169,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     if not solver_success:
         cbc_solver = pulp.PULP_CBC_CMD(timeLimit=60, msg=False)
         model.solve(cbc_solver)
-    # ---------------------------------------------
     
     optimal_squad = []
     for i in valid_ids:
