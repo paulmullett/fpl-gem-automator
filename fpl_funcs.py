@@ -122,11 +122,9 @@ def calculate_tier1_translation_factor(p: Dict[str, Any]) -> float:
     final_multiplier = base_coef * age_modifier * xg_scaling
     return max(0.65, min(0.98, final_multiplier))
 
-def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] = None,
-                     element_types_map: Optional[Dict[int, str]] = None) -> Dict[str, Any]:
-    """
-    Coalesces raw FPL API bootstrap element dictionaries into clean, standardized numeric formats.
-    """
+def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[str, str]] = None,
+                     element_types_map: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+    """Coalesces raw FPL API bootstrap element dictionaries into clean, standardized numeric formats."""
     p = {}
     p["id"] = int(raw_p.get("id"))
     p["name"] = raw_p.get("web_name") or raw_p.get("name") or "Unknown"
@@ -140,7 +138,7 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["pos"] = element_types_map.get(p["pos_id"], "UNK") if element_types_map else str(p["pos_id"])
 
     p["cost"] = _safe_float(raw_p.get("now_cost") or raw_p.get("cost")) / 10.0
-    p["selling_price"] = p["cost"]  # Fallback for solver budget calculations
+    p["selling_price"] = p["cost"]
     p["status"] = raw_p.get("status", "")
     p["news"] = raw_p.get("news", "")
 
@@ -148,10 +146,12 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["form"] = _safe_float(raw_p.get("form") or 0.0)
     p["total_points"] = int(raw_p.get("total_points") or 0)
     p["own"] = _safe_float(raw_p.get("selected_by_percent") or raw_p.get("own") or 0.0)
-    p["top_10k_eo"] = _safe_float(raw_p.get("top_10k_eo") or p["own"]) 
+    
+    # Phase 2 & 3: Dormant Future-Proofing Metrics
+    p["top_10k_eo"] = _safe_float(raw_p.get("top_10k_eo") or p["own"])
     p["price_delta_prob"] = _safe_float(raw_p.get("price_delta_prob") or 0.0)
+    
     p["chance_of_playing_next_round"] = raw_p.get("chance_of_playing_next_round", "")
-
     p["xgi_90"] = _safe_float(raw_p.get("expected_goal_involvements_per_90") or 0.0)
     p["xgc_90"] = _safe_float(raw_p.get("expected_goals_conceded_per_90") or 1.35)
     if p["xgc_90"] <= 0.0: p["xgc_90"] = 1.35
