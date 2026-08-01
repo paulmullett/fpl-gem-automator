@@ -8,20 +8,34 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
                             horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
                             w_sub_1: float = 0.05):
-    """Solves an 8-GW Deep-Tree Horizon with Universe Pruning and Time Limits."""
+    """Solves an 8-GW Deep-Tree Horizon with Stratified Bucket Pruning and HiGHS Time Limits."""
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
     gameweeks = list(range(horizons))
     
-    # --- UNIVERSE PRUNING LOGIC ---
-    # Isolate the top 150 players by total EV across the horizon, plus current squad, to prevent combinatorial explosion.
+    # --- STRATIFIED BUCKET PRUNING UNIVERSE ENGINE ---
+    # Prevents combinatorial explosion while guaranteeing price-floor fodder (£4.0m/£4.5m) is never excluded.
     current_set = set(current_squad_ids) if current_squad_ids else set()
-    ev_totals = {pid: sum(ev_matrix[pid][:horizons]) for pid in players_dict.keys()}
-    sorted_pids = sorted(ev_totals.keys(), key=lambda x: ev_totals[x], reverse=True)
     
-    top_pids = set(sorted_pids[:150])
-    valid_ids = list(top_pids | current_set)
-    # ------------------------------
+    by_pos = {1: [], 2: [], 3: [], 4: []}
+    for pid, p in players_dict.items():
+        by_pos[p.get("pos_id", 3)].append(pid)
+        
+    selected_pids = set(current_set)
+    
+    # 1. Top EV selections per position across the 8-GW horizon
+    pos_ev_limits = {1: 25, 2: 45, 3: 45, 4: 25}
+    for pos_id, limits in pos_ev_limits.items():
+        sorted_by_ev = sorted(by_pos[pos_id], key=lambda i: sum(ev_matrix[i][:horizons]), reverse=True)
+        selected_pids.update(sorted_by_ev[:limits])
+        
+    # 2. Price Floor Guarantees: Include 8 cheapest active players per position (sorted by price asc, EV desc)
+    for pos_id in [1, 2, 3, 4]:
+        cheapest = sorted(by_pos[pos_id], key=lambda i: (players_dict[i]["cost"], -sum(ev_matrix[i][:horizons])))
+        selected_pids.update(cheapest[:8])
+        
+    valid_ids = list(selected_pids)
+    # -------------------------------------------------
     
     squad = pulp.LpVariable.dicts("squad", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     starter = pulp.LpVariable.dicts("starter", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
@@ -145,7 +159,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
             model += ft[t] <= 5  
 
-    # Execute HiGHS with a strict 60-second time limit to prevent GitHub Action timeouts
     model.solve(pulp.getSolver('HiGHS', timeLimit=60, msg=False))
     
     optimal_squad = [players_dict[i] for i in valid_ids if squad[i, 0].varValue and squad[i, 0].varValue > 0.5]
