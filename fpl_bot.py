@@ -91,10 +91,22 @@ SECTION 3: TRANSFER ECONOMICS & CHIP STATUS
 
 SECTION 4: REAL-WORLD TACTICAL EXPLOIT & MATCHUP ANALYSIS
 - STRICT REAL-WORLD ISOLATION: FPL players play for different clubs. Do NOT describe them passing to each other unless they play for the exact same real-world team.
-- Generate an ASCII Tactical Exploit Diagram inside a `text` codeblock. You MUST include at least 3 distinct club blocks representing key starting assets (e.g., ARSENAL, MAN CITY, CHELSEA/LIV) inside the diagram box. Do not output a single-club box.
+- Generate an aligned ASCII Tactical Exploit Diagram inside a `text` codeblock. You MUST include at least 3 distinct club blocks representing key starting assets (e.g., ARSENAL, MAN CITY, CHELSEA/LIV) inside the diagram box. Do not output a single-club box. Format it EXACTLY like this example structure:
++-------------------------------------------------------------------------------+
+|                      REAL-WORLD TACTICAL EXPLOIT MATRIX                       |
++-------------------------------------------------------------------------------+
+| ARSENAL TACTICAL BLOCK:                                                       |
+| [Gabriel] <---> [Calafiori] (Set-Piece Dominance & High Defensive Line)       |
+|                                                                               |
+| MANCHESTER CITY TACTICAL BLOCK:                                               |
+| [Cherki] ---> [Haaland] (Central Half-Space Overload)                         |
+|                                                                               |
+| [THIRD CLUB] TACTICAL BLOCK:                                                  |
+| [Player A] <---> [Player B] (Specific Tactical Exploit)                       |
++-------------------------------------------------------------------------------+
 
 SECTION 5: HUMAN ORACLE INTELLIGENCE BRIEFING
-- STRICT NULL-STATE RULE: Unless the LIVE ITK NEWS section contains specific, direct injury or press conference quotes for players in our payload, you are STRICTLY FORBIDDEN from writing generic summaries or commentary. Output EXACTLY and ONLY: 'Status: Awaiting live press conference data.' and nothing else in this section.
+- STRICT NULL-STATE RULE: Unless the LIVE ITK NEWS section contains specific, direct injury or press conference quotes for players in our payload, you are STRICTLY FORBIDDEN from writing generic summaries or commentary. Output EXACTLY and ONLY: 'Status: Awaiting live press conference data.' and nothing else.
 
 MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
 - You MUST conclude by pasting the EXACT pre-formatted text block provided at the bottom of the payload, verbatim, without altering its alignment.
@@ -425,6 +437,7 @@ def get_fpl_data():
     def count_pos(group, pos_id): return len([p for p in group if p["pos_id"] == pos_id])
     formation = f"{count_pos(starters, 2)}-{count_pos(starters, 3)}-{count_pos(starters, 4)}"
 
+    # 5. VISUAL AESTHETICS: Precision formatting matching user's preferred layout
     locked_squad_str = "```text\n"
     locked_squad_str += "================================================================================\n"
     locked_squad_str += "                       FINAL LOCKED-IN SQUAD SUMMARY\n"
@@ -485,4 +498,83 @@ def get_fpl_data():
     locked_squad_str += f"• Stochastic 10th Percentile Floor:    {starter_floor:>6.1f} pts\n"
     locked_squad_str += f"• Stochastic 90th Percentile Ceiling:  {starter_ceiling:>6.1f} pts\n"
     locked_squad_str += "================================================================================\n"
-    locked_squad_str += "
+    locked_squad_str += "```\n"
+
+    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
+
+def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
+    gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
+
+    if WORKFLOW_INPUT == "post_gameweek_review":
+        action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
+        phase_instructions = (
+            "- FOCUS: Backward-looking performance evaluation, market equity, and medium-term planning.\n"
+            "- STRICT PHASE ISOLATION: Do NOT generate a pre-match pitch mismatch diagram or starting XI tactical justifications.\n"
+            "- Detail the MULTI-PERIOD TRANSFER TREE (MPO) roadmap for GW+1 through GW+7.\n"
+            "- GW1 ZERO-STATE RULE: If target_gw is 1, acknowledge actual recalibration data is pending."
+        )
+    elif WORKFLOW_INPUT == "pre_gameweek_deadline":
+        action_type = "Pre-Gameweek Final Deadline Lock & Late ITK Leak Audit"
+        phase_instructions = (
+            "- FOCUS: Forward-looking immediate execution for the upcoming deadline.\n"
+            "- Confirm any Human Oracle xMins overrides applied and lock Starting XI, Captain (C), Vice-Captain (VC)."
+        )
+    else:
+        action_type = "Full Weekly Execution & Analytical Breakdown"
+        phase_instructions = "- Balanced breakdown covering transfer economics, market volatility, and upcoming fixture geometry."
+
+    focus_instructions = (
+        f"1. 11-Man Verification Lock: Output exact mathematically locked Starting XI and Bench.\n"
+        f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
+        f"3. Analytical Justification: Use EXACT 'TRUE 1-GW EV' numbers provided.\n"
+        f"4. MANDATORY SIGN-OFF: Conclude response with boxed 'FINAL LOCKED-IN SQUAD SUMMARY' block exactly as provided."
+    )
+
+    return f"""
+    Run {action_type} for Gameweek {target_gw}.
+    ### CURRENT SQUAD STATE & ECONOMICS: Bank: £{bank}m | Saved Transfers: {free_transfers}
+    ### NEW ARRIVALS & FOREIGN TRANSFERS:\n{new_arrivals_str}
+    ### ACTIVE 2026/27 MARKET WATCHLIST:\n{market_str}\n{live_news}
+    ### DATA INSTRUCTIONS:\n{focus_instructions}{gw1_override}
+
+    ### MATHEMATICALLY LOCKED SQUAD PAYLOAD (INSERT VERBATIM AT END OF RESPONSE):
+    {locked_squad_str}
+    """
+
+def send_to_discord(webhook_url, text):
+    chunks, current_chunk = [], ""
+    for line in text.split("\n"):
+        while len(line) > 1800:
+            if len(current_chunk) > 0: chunks.append(current_chunk); current_chunk = ""
+            chunks.append(line[:1800]); line = line[1800:]
+        if len(current_chunk) + len(line) + 1 > 1800:
+            chunks.append(current_chunk); current_chunk = line + "\n"
+        else: current_chunk += line + "\n"
+    if current_chunk.strip(): chunks.append(current_chunk)
+    for chunk in chunks: requests.post(webhook_url, json={"content": chunk})
+
+def main():
+    target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str = get_fpl_data()
+    print("--- FETCHING LIVE WEB SEARCH DATA ---")
+    live_news = get_live_fpl_news()
+    prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news)
+    
+    print(f"--- QUERYING GEMINI API (Target GW: {target_gw} | Chip: {ACTIVE_CHIP}) ---")
+    try:
+        response = client.models.generate_content(
+            model='gemini-3.6-flash', contents=prompt,
+            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.2)
+        )
+    except Exception as e:
+        print(f"CRITICAL ERROR generating content with Gemini: {str(e)}")
+        sys.exit(1)
+        
+    content = response.text if response and response.text else ""
+    if not content: sys.exit(1)
+
+    print(f"--- GEMINI RESPONSE RECEIVED ({len(content)} chars) ---")
+    send_to_discord(DISCORD_WEBHOOK_URL, content)
+    print("--- DISCORD DELIVERY COMPLETE ---")
+
+if __name__ == "__main__":
+    main()
