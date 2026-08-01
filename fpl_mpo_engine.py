@@ -95,12 +95,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
         # Rolling Financial Budget Constraint
-        if t == 0:
-            for t in gameweeks:
-        if t == 0:
+        
+        for t in gameweeks:
+          if t == 0:
             starting_budget = current_bank + sum(players_dict[i].get("selling_price", players_dict[i]["cost"]) for i in current_squad_ids if i in valid_ids) if current_squad_ids else 100.0
             model += pulp.lpSum([players_dict[i]["cost"] * squad[i, t] for i in valid_ids]) + bank[t] <= starting_budget
-        else:
+          else:
             # Apply Price Volatility Projection for future horizons
             model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * (t-1))) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
           
