@@ -8,11 +8,20 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
                             horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
                             w_sub_1: float = 0.05):
-    """Solves an 8-GW Deep-Tree Horizon with Dynamic Poisson-Binomial bench weighting."""
+    """Solves an 8-GW Deep-Tree Horizon with Universe Pruning and Time Limits."""
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
-    valid_ids = list(players_dict.keys())
     gameweeks = list(range(horizons))
+    
+    # --- UNIVERSE PRUNING LOGIC ---
+    # Isolate the top 150 players by total EV across the horizon, plus current squad, to prevent combinatorial explosion.
+    current_set = set(current_squad_ids) if current_squad_ids else set()
+    ev_totals = {pid: sum(ev_matrix[pid][:horizons]) for pid in players_dict.keys()}
+    sorted_pids = sorted(ev_totals.keys(), key=lambda x: ev_totals[x], reverse=True)
+    
+    top_pids = set(sorted_pids[:150])
+    valid_ids = list(top_pids | current_set)
+    # ------------------------------
     
     squad = pulp.LpVariable.dicts("squad", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     starter = pulp.LpVariable.dicts("starter", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
@@ -136,7 +145,8 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
             model += ft[t] <= 5  
 
-    model.solve(pulp.getSolver('HiGHS', msg=False))
+    # Execute HiGHS with a strict 60-second time limit to prevent GitHub Action timeouts
+    model.solve(pulp.getSolver('HiGHS', timeLimit=60, msg=False))
     
     optimal_squad = [players_dict[i] for i in valid_ids if squad[i, 0].varValue and squad[i, 0].varValue > 0.5]
     
