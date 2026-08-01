@@ -4,12 +4,12 @@ on:
   workflow_dispatch:
     inputs:
       player_a:
-        description: 'First player name (e.g., Tzolis)'
+        description: 'First player name (e.g., Estevao, Odegaard, Haaland)'
         required: true
         default: 'Haaland'
         type: string
       player_b:
-        description: 'Second player name (e.g., Estêvão)'
+        description: 'Second player name (e.g., Isak, Saka, Palmer)'
         required: true
         default: 'Isak'
         type: string
@@ -19,15 +19,15 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install requests pulp
+        run: pip install requests pulp duckduckgo_search
 
       - name: Execute Comparison Script
         env:
