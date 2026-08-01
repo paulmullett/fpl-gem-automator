@@ -18,7 +18,6 @@ An advanced, institutional-grade Fantasy Premier League (FPL) modeling and autom
 │   ├── fpl_engine.yml
 │   ├── fpl_player_compare.yml
 ├── fpl_bot.py                 # Bot integration script
-├── fpl_compare.py             # Master orchestration script
 ├── fpl_compare_players.py     # For player comparison tool
 ├── fpl_monte_carlo.py         # Stochastic risk simulation engine
 ├── fpl_mpo_engine.py          # Multi-period horizon optimization solver
