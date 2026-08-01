@@ -38,8 +38,8 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     if active_chip == "BENCH_BOOST":
         w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 1.0, 1.0, 1.0, 1.0
     else:
-        # Heavily weight Sub 1 to secure rotational cover, defund Sub 2 & 3
-        w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 0.20, 0.01, 0.00, 0.03
+        # Heavily defund Sub 1 weight to 0.05 to prevent premium capital traps
+        w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 0.05, 0.01, 0.00, 0.03
 
     for t in gameweeks:
         gw_points = []
