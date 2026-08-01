@@ -42,10 +42,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v7
+        uses: actions/checkout@v4
 
       - name: Set up Python
-        uses: actions/setup-python@v7
+        uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
@@ -61,7 +61,7 @@ jobs:
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
           MANUAL_TRIGGER: ${{ github.event.inputs.manual_trigger }}
-          ACTIVE_CHIP: ${{ secrets.ACTIVE_CHIP }} 
+          ACTIVE_CHIP: ${{ github.event.inputs.active_chip }}
           XMINS_INPUT: ${{ github.event.inputs.xmins_input }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture }}
         run: python fpl_bot.py
