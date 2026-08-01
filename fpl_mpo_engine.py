@@ -39,30 +39,31 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     for t in gameweeks:
         gw_points = []
         for i in valid_ids:
-            p = players_dict[i]
-            ev = ev_matrix[i][t]
-            ownership = p.get("own", 0.0) / 100.0
-            
-            # Risk Posture rank threat multipliers
-            if risk_posture == "SHIELD":
-                rank_gravity = (ev * (ownership ** 2) * 1.50)
-            elif risk_posture == "CHASE":
-                rank_gravity = -(ev * ownership * 0.50)
-            else:
-                rank_gravity = (ev * (ownership ** 2) * 0.75)
-            
-            trans_in_ev = p.get("transfers_in_event", 0)
-            trans_out_ev = p.get("transfers_out_event", 0)
-            momentum_boost = max(0.0, ((trans_in_ev - trans_out_ev) / 100000.0) * 0.05)
-            
-            gw_points.append(
-                (ev * starter[i, t]) + 
-                ((ev + rank_gravity) * captain[i, t]) + 
-                (bench_discount * ev * (squad[i, t] - starter[i, t])) +
-                (momentum_boost * squad[i, t])
-            )
-            
-        objective.append((gamma ** t) * pulp.lpSum(gw_points) - (4.0 * hits[t]))
+        p = players_dict[i]
+        ev = ev_matrix[i][t]
+        
+        # Pull Top 10k EO if available, fallback to overall ownership
+        ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
+        
+        if risk_posture == "SHIELD":
+            rank_gravity = (ev * (ownership ** 2) * 1.50)
+        elif risk_posture == "CHASE":
+            rank_gravity = -(ev * ownership * 0.50)
+        else:
+            rank_gravity = (ev * (ownership ** 2) * 0.75)
+        
+        trans_in_ev = p.get("transfers_in_event", 0)
+        trans_out_ev = p.get("transfers_out_event", 0)
+        momentum_boost = max(0.0, ((trans_in_ev - trans_out_ev) / 100000.0) * 0.05)
+        
+        gw_points.append(
+            (ev * starter[i, t]) + 
+            ((ev + rank_gravity) * captain[i, t]) + 
+            (bench_discount * ev * (squad[i, t] - starter[i, t])) +
+            (momentum_boost * squad[i, t])
+        )
+        
+    objective.append((gamma ** t) * pulp.lpSum(gw_points) - (4.0 * hits[t]))
 
     model += pulp.lpSum(objective)
 
@@ -95,11 +96,14 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
 
         # Rolling Financial Budget Constraint
         if t == 0:
+            for t in gameweeks:
+        if t == 0:
             starting_budget = current_bank + sum(players_dict[i].get("selling_price", players_dict[i]["cost"]) for i in current_squad_ids if i in valid_ids) if current_squad_ids else 100.0
             model += pulp.lpSum([players_dict[i]["cost"] * squad[i, t] for i in valid_ids]) + bank[t] <= starting_budget
         else:
-            model += pulp.lpSum([players_dict[i]["cost"] * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([players_dict[i]["cost"] * squad[i, t-1] for i in valid_ids]) + bank[t-1]
-
+            # Apply Price Volatility Projection for future horizons
+            model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * (t-1))) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
+          
         # Transfer Balance & Banking Economics
         if t == 0:
             if current_squad_ids and len(current_squad_ids) == 15 and free_transfers_avail != "Unlimited":
@@ -122,7 +126,7 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             model += ft[t] <= ft[t-1] - pulp.lpSum([trans_in[i, t] for i in valid_ids]) + hits[t] + 1
             model += ft[t] <= 5  # Cap maximum banked free transfers at 5
 
-    model.solve(pulp.PULP_CBC_CMD(msg=False))
+    model.solve(pulp.getSolver('HiGHS', msg=False))
     
     optimal_squad = [players_dict[i] for i in valid_ids if squad[i, 0].varValue and squad[i, 0].varValue > 0.5]
     
