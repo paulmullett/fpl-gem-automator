@@ -136,12 +136,8 @@ def get_live_price_deltas(players_dict: dict) -> dict:
     """
     deltas = {}
     try:
-        # User Configuration: Inject live aggregator endpoint here (e.g. fplstatistics / LiveFPL)
-        # resp = requests.get("https://your-market-api.com/prices", timeout=2)
-        # if resp.status_code == 200: ...
         raise ConnectionError("No external API provided, defaulting to Net Transfer heuristic.")
     except Exception:
-        # Robust Fallback: Model market movement using FPL API net transfers
         for pid, p in players_dict.items():
             net_transfers = p.get("transfers_in_event", 0) - p.get("transfers_out_event", 0)
             if net_transfers > 120000:
