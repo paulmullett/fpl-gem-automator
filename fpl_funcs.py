@@ -284,31 +284,6 @@ def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float],
 
     return ev_4gw * fdr_multiplier
 
-def calculate_dynamic_bench_discount(starters: list, xmins_overrides: Optional[Dict[str, float]] = None) -> float:
-    """
-    Combinatorial Auto-Sub Probability Matrix Proxy.
-    Uses Poisson binomial approximation of starter absence to weight the bench multiplier.
-    """
-    if not starters: 
-        return 0.01
-    if xmins_overrides is None: 
-        xmins_overrides = {}
-
-    starter_miss_probs = []
-    for p in starters:
-        pid_str = str(p.get("id"))
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        # Calculate probability of 0 minutes played
-        p_miss = max(0.0, 1.0 - (xmins / 90.0))
-        starter_miss_probs.append(p_miss)
-        
-    expected_absentees = sum(starter_miss_probs)
-    
-    # Multiplier scales geometrically as absentee probability rises
-    dynamic_discount = 0.01 + (0.08 * expected_absentees) + (0.02 * (expected_absentees ** 2))
-    
-    return round(min(0.35, dynamic_discount), 4)
-
 def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                     market_data: Optional[Dict[str, Any]] = None, 
                     weights: Optional[Dict[str, float]] = None) -> float:
