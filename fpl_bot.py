@@ -410,11 +410,22 @@ def get_fpl_data():
         locked_squad_str += f"- {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev}){is_cap}{is_vice}\n"
         
     locked_squad_str += "\nBENCH:\n"
-    for i, p in enumerate(bench):
+    
+    # Sort outfielders by EV first, separate from GK to match exact FPL substitution priority
+    bench_gk = [p for p in bench if p["pos_id"] == 1]
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+    
+    for p in bench_gk:
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
         actual_ev = round(get_base_ev(p, xmins_overrides, weights), 2)
-        locked_squad_str += f"Slot {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
+        locked_squad_str += f"GK Sub: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
+        
+    for i, p in enumerate(bench_outfield):
+        pid_str = str(p["id"])
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        actual_ev = round(get_base_ev(p, xmins_overrides, weights), 2)
+        locked_squad_str += f"Outfield Sub {i+1}: {p['name']} ({p['team']}, {p['pos']}, £{p['cost']}m, Proj. Mins: {xmins:.1f}, TRUE 1-GW EV: {actual_ev})\n"
        
     locked_squad_str += f"\n### TACTICAL MITIGATION OPTION FLAGS\n{mitigation_flags_str}\n\n"
     
