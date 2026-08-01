@@ -39,8 +39,8 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     for t in gameweeks:
         gw_points = []
         for i in valid_ids:
-        p = players_dict[i]
-        ev = ev_matrix[i][t]
+          p = players_dict[i]
+          ev = ev_matrix[i][t]
         
         # Pull Top 10k EO if available, fallback to overall ownership
         ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
