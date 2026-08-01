@@ -68,28 +68,30 @@ You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst
 - STRICT NEGATIVE CONSTRAINT: If a player's projected xMins in the payload is >80.0, you MUST NOT claim a 25% minute dampener was applied. 
 
 ### OUTPUT FORMAT & AESTHETIC DIRECTIVES
-You MUST format your analysis with extreme visual precision for Discord rendering. Use standard Discord Markdown. NEVER use LaTeX formatting or emojis. 
+You MUST format your analysis with extreme visual precision for Discord rendering. Use standard Discord Markdown (**Bold** for emphasis). NEVER use LaTeX syntax or emojis under any circumstance.
+
+STRICT CODEBLOCK RULE: Every codeblock (```text, ```yaml, etc.) MUST be explicitly closed with ``` on its own separate line before writing any subsequent text or section heading.
 
 SECTION 1: EXECUTIVE SUMMARY & CORE MOVES
-- Provide a sharp, strategic overview.
-- Generate a visual ASCII representation of the formation inside a `text` codeblock. You MUST include both the STARTING XI pitch layout AND the BENCH HIERARCHY directly below it within the same ASCII box. Align the text symmetrically.
+- Provide a concise strategic summary tailored to the run mode.
+- You MUST insert the pre-formatted ASCII Pitch & Bench Diagram provided in the payload EXACTLY as given. Do NOT alter its lines or borders.
 
 SECTION 2: QUANTITATIVE TRADE-OFF SUMMARY
 - Format strictly as clean, bolded bullet points:
   • **[Player Name]** ([TEAM]) — **[EV] EV** | £[X.X]m | [One-sentence analytical justification]
 
 SECTION 3: TRANSFER ECONOMICS & CHIP STATUS
-- Use > blockquotes to highlight rolling transfer logic and MPO roadmap insights.
+- Detail capital management, rolling transfers, and MPO roadmap.
 
 SECTION 4: REAL-WORLD TACTICAL EXPLOIT & MATCHUP ANALYSIS
 - STRICT REAL-WORLD ISOLATION: FPL players play for different clubs. Do NOT describe them passing to each other unless they play for the exact same real-world Premier League team.
-- Generate an aligned ASCII Tactical Exploit Diagram inside a codeblock.
+- Generate an aligned ASCII Tactical Exploit Diagram inside a ```text codeblock. Explicitly close the codeblock with ``` before proceeding to Section 5.
 
 SECTION 5: HUMAN ORACLE INTELLIGENCE BRIEFING
-- STRICT NULL-STATE LOGIC: If the LIVE ITK NEWS section contains no quotes or relevant injury updates, output exactly: 'Status: Awaiting live press conference data.' and nothing else in this section.
+- STRICT NULL-STATE LOGIC: If the LIVE ITK NEWS section contains no quotes or relevant injury updates, output exactly: 'Status: Awaiting live press conference data.' and nothing else in this section. Ensure any open codeblocks from Section 4 are closed before writing Section 5.
 
 MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
-- You MUST conclude by pasting the EXACT pre-formatted `yaml` codeblock provided at the bottom of the system payload, verbatim, without altering its alignment or syntax.
+- Conclude your response by pasting the EXACT pre-formatted `yaml` block provided at the bottom of the payload, verbatim, without stripping spaces, altering lines, or omitting any text.
 """
 
 def load_state():
@@ -183,6 +185,57 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
         if p["team"] in UEFA_TEAMS:
             flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion.]")
     return flags
+
+def generate_ascii_pitch_box(starters, bench, formation, cap, vice):
+    """Pre-generates a pixel-aligned ASCII Pitch and Bench diagram inside Python."""
+    width = 72
+    lines = []
+    lines.append("```text")
+    lines.append("+" + "-" * (width - 2) + "+")
+    title = f"STARTING XI FORMATION ({formation})"
+    lines.append("|" + title.center(width - 2) + "|")
+    lines.append("+" + "-" * (width - 2) + "+")
+
+    gks = [p for p in starters if p["pos_id"] == 1]
+    defs = [p for p in starters if p["pos_id"] == 2]
+    mids = [p for p in starters if p["pos_id"] == 3]
+    fwds = [p for p in starters if p["pos_id"] == 4]
+
+    def fmt_group(plist):
+        items = []
+        for p in plist:
+            c_tag = " (C)" if cap and p["id"] == cap["id"] else (" (VC)" if vice and p["id"] == vice["id"] else "")
+            items.append(f"{p['name']}{c_tag} ({p['team']})")
+        return "   ".join(items).center(width - 2)
+
+    lines.append("|" + fmt_group(gks) + "|")
+    lines.append("|" + " " * (width - 2) + "|")
+    lines.append("|" + fmt_group(defs) + "|")
+    lines.append("|" + " " * (width - 2) + "|")
+    lines.append("|" + fmt_group(mids) + "|")
+    lines.append("|" + " " * (width - 2) + "|")
+    lines.append("|" + fmt_group(fwds) + "|")
+    lines.append("+" + "-" * (width - 2) + "+")
+    lines.append("|" + "BENCH HIERARCHY".center(width - 2) + "|")
+    lines.append("+" + "-" * (width - 2) + "+")
+
+    bench_gk = [p for p in bench if p["pos_id"] == 1]
+    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: x.get("cost", 0), reverse=True)
+
+    b_items = []
+    if bench_gk:
+        b_items.append(f"GK: {bench_gk[0]['name']} ({bench_gk[0]['team']})")
+    for i, p in enumerate(bench_outfield):
+        b_items.append(f"S{i+1}: {p['name']} ({p['team']})")
+
+    b_line1 = "  |  ".join(b_items[:2]).center(width - 2)
+    b_line2 = "  |  ".join(b_items[2:]).center(width - 2)
+    lines.append("|" + b_line1 + "|")
+    if b_items[2:]:
+        lines.append("|" + b_line2 + "|")
+    lines.append("+" + "-" * (width - 2) + "+")
+    lines.append("```")
+    return "\n".join(lines)
 
 def get_fpl_data():
     print("Fetching live market odds for tactical alignment...")
@@ -414,10 +467,11 @@ def get_fpl_data():
     }
     save_state(state)
     
-    # 5. VISUAL AESTHETICS: Ultra-Clean Formatted Python Output
     def count_pos(group, pos_id): return len([p for p in group if p["pos_id"] == pos_id])
     formation = f"{count_pos(starters, 2)}-{count_pos(starters, 3)}-{count_pos(starters, 4)}"
     
+    pitch_ascii_box = generate_ascii_pitch_box(starters, bench, formation, cap, vice)
+
     locked_squad_str = "```yaml\n"
     locked_squad_str += "================================================================================\n"
     locked_squad_str += f"              FINAL LOCKED-IN SQUAD SUMMARY: GAMEWEEK {target_gw:<23}\n"
@@ -479,9 +533,9 @@ def get_fpl_data():
     locked_squad_str += "================================================================================\n"
     locked_squad_str += "```\n"
 
-    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
+    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, pitch_ascii_box
 
-def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
+def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news, pitch_ascii_box):
     gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
 
     if WORKFLOW_INPUT == "post_gameweek_review":
@@ -517,7 +571,10 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     ### ACTIVE 2026/27 MARKET WATCHLIST:\n{market_str}\n{live_news}
     ### DATA INSTRUCTIONS:\n{focus_instructions}{gw1_override}
     
-    ### MATHEMATICALLY LOCKED SQUAD PAYLOAD:
+    ### PRE-RENDERED ASCII PITCH & BENCH DIAGRAM (INSERT VERBATIM IN SECTION 1):
+    {pitch_ascii_box}
+
+    ### MATHEMATICALLY LOCKED SQUAD PAYLOAD (INSERT VERBATIM AT END OF RESPONSE):
     {locked_squad_str}
     """
 
@@ -534,10 +591,10 @@ def send_to_discord(webhook_url, text):
     for chunk in chunks: requests.post(webhook_url, json={"content": chunk})
 
 def main():
-    target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str = get_fpl_data()
+    target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, pitch_ascii_box = get_fpl_data()
     print("--- FETCHING LIVE WEB SEARCH DATA ---")
     live_news = get_live_fpl_news()
-    prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news)
+    prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news, pitch_ascii_box)
     
     print(f"--- QUERYING GEMINI API (Target GW: {target_gw} | Chip: {ACTIVE_CHIP}) ---")
     try:
