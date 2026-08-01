@@ -315,26 +315,20 @@ def get_fpl_data():
             fdr_multiplier = 1.0 + (3.0 - fdr) * 0.10 if fdr != 6.0 else 0.0
             ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier * fix_count)
 
-    # Phase 1 Gate: Dynamic Poisson-Binomial Bench Weighting
+    # Phase 1 Gate: Calibrated Sigmoid Zero-Minute Bench Weighting
     starter_candidates = sorted([p for p in valid_ids if players[p].get("cost", 0) >= 5.0], 
                                 key=lambda x: ev_matrix[x][0], reverse=True)[:11]
     
-    p_all_play = 1.0
+    p_all_start_play = 1.0
     for pid in starter_candidates:
         p = players[pid]
         pid_str = str(p["id"])
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        p_miss = max(0.0, 1.0 - (xmins / 90.0))
-        p_all_play *= (1.0 - p_miss)
+        # Logistic sigmoid probability of playing EXACTLY 0 minutes
+        p_zero_mins = 1.0 / (1.0 + math.exp(0.1 * (xmins - 35.0)))
+        p_all_start_play *= (1.0 - p_zero_mins)
         
-    dynamic_w_sub_1 = round(max(0.05, min(0.35, 1.0 - p_all_play)), 3)
-
-    # Phase 1: MPO Solver Execution (8-GW Horizon)
-    optimal_squad, transfer_plan = solve_multi_period_model(
-        players, ev_matrix, current_squad_ids, total_liquid_budget, 
-        free_transfers, active_chip=ACTIVE_CHIP, horizons=8, risk_posture=RISK_POSTURE, target_gw=target_gw,
-        w_sub_1=dynamic_w_sub_1
-    )
+    dynamic_w_sub_1 = round(max(0.04, min(0.30, 1.0 - p_all_start_play)), 3)
 
     # Phase 2: Micro-Optimization Execution
     sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
