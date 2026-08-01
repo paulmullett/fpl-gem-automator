@@ -148,6 +148,8 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["form"] = _safe_float(raw_p.get("form") or 0.0)
     p["total_points"] = int(raw_p.get("total_points") or 0)
     p["own"] = _safe_float(raw_p.get("selected_by_percent") or raw_p.get("own") or 0.0)
+    p["top_10k_eo"] = _safe_float(raw_p.get("top_10k_eo") or p["own"]) 
+    p["price_delta_prob"] = _safe_float(raw_p.get("price_delta_prob") or 0.0)
     p["chance_of_playing_next_round"] = raw_p.get("chance_of_playing_next_round", "")
 
     p["xgi_90"] = _safe_float(raw_p.get("expected_goal_involvements_per_90") or 0.0)
@@ -283,21 +285,29 @@ def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float],
     return ev_4gw * fdr_multiplier
 
 def calculate_dynamic_bench_discount(starters: list, xmins_overrides: Optional[Dict[str, float]] = None) -> float:
-    """Calculates dynamic bench discount based on starter rotation risk (scales 0.01 to 0.20)."""
-    if not starters:
+    """
+    Combinatorial Auto-Sub Probability Matrix Proxy.
+    Uses Poisson binomial approximation of starter absence to weight the bench multiplier.
+    """
+    if not starters: 
         return 0.01
-    if xmins_overrides is None:
+    if xmins_overrides is None: 
         xmins_overrides = {}
 
-    total_rotation_risk = 0.0
+    starter_miss_probs = []
     for p in starters:
         pid_str = str(p.get("id"))
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
-        risk = max(0.0, (90.0 - xmins) / 90.0)
-        total_rotation_risk += risk
-
-    dynamic_discount = 0.01 + (total_rotation_risk * 0.03)
-    return round(min(0.20, dynamic_discount), 4)
+        # Calculate probability of 0 minutes played
+        p_miss = max(0.0, 1.0 - (xmins / 90.0))
+        starter_miss_probs.append(p_miss)
+        
+    expected_absentees = sum(starter_miss_probs)
+    
+    # Multiplier scales geometrically as absentee probability rises
+    dynamic_discount = 0.01 + (0.08 * expected_absentees) + (0.02 * (expected_absentees ** 2))
+    
+    return round(min(0.35, dynamic_discount), 4)
 
 def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                     market_data: Optional[Dict[str, Any]] = None, 
