@@ -27,7 +27,7 @@ jobs:
           python-version: '3.11'
 
       - name: Install Dependencies
-        run: pip install requests pulp duckduckgo_search scipy
+        run: pip install requests pulp duckduckgo_search scipy numpy
 
       - name: Execute Comparison Script
         env:
