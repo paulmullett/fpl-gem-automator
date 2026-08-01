@@ -4,7 +4,7 @@ fpl_bot.py — Primary Execution Script & Discord Interface
 Pipeline Flow:
 1. Environment & API secret pre-flight validation.
 2. Ingests FPL API bootstrap-static data & recalibrates PID model weights against historical actuals.
-3. Solves Phase 1 Multi-Period Optimization (MPO) transfer trees via MILP (PuLP).
+3. Solves Phase 1 Multi-Period Optimization (MPO) transfer trees via MILP.
 4. Solves Phase 2 Starting XI, Captaincy, and Bench hierarchy micro-optimization.
 5. Executes Monte Carlo stochastic simulations for 10th/90th percentile bounds.
 6. Scrapes live ITK press conference & leak feeds with strict temporal filters.
@@ -107,8 +107,7 @@ SECTION 4: REAL-WORLD TACTICAL EXPLOIT & MATCHUP ANALYSIS
 
 SECTION 5: HUMAN ORACLE INTELLIGENCE BRIEFING
 - STRICT NEGATIVE CONSTRAINT: You are a passive intelligence analyst. You MUST NOT claim to have altered the squad, EV, or xMins based on live news. The math is already locked.
-- Filter search data into two categories: VERIFIED STATUS (Ben Dinnery/Crellin/quotes) and UNVERIFIED SIGNALS (traveling squad leaks/training absences).
-- Discard rumors and provide Actionable Drill Syntax for threats: `[PlayerName]:0`
+- STRICT NULL-STATE LOGIC: If the LIVE ITK NEWS section contains no quotes or relevant injury updates, you MUST NOT hallucinate manager statements or mention any manager by name. Output exactly: 'Status: Awaiting live press conference data.' and nothing else in this section.
 
 MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
 - Conclude with the exact ASCII Box block provided in the payload containing the FINAL LOCKED-IN SQUAD SUMMARY, MULTI-PERIOD TRANSFER TREE, ALGORITHMIC CHIP RECOMMENDATIONS, and SQUAD HEALTH & VARIANCE REPORT.
@@ -305,7 +304,10 @@ def get_fpl_data():
                 
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
+    # Phase 4 Gate: BGW/DGW Fixture Mapping
     team_gw_fdr = {t_id: [6.0] * 4 for t_id in teams.keys()}
+    team_gw_fixtures = {t_id: [0.0] * 4 for t_id in teams.keys()}
+    
     for f in fixtures_data:
         event = f.get("event")
         if event and target_gw <= event < target_gw + 4:
@@ -313,8 +315,10 @@ def get_fpl_data():
             team_a, team_h = f.get("team_a"), f.get("team_h")
             if team_a in team_gw_fdr:
                 team_gw_fdr[team_a][t] = f.get("team_a_difficulty", 3)
+                team_gw_fixtures[team_a][t] += 1.0
             if team_h in team_gw_fdr:
                 team_gw_fdr[team_h][t] = f.get("team_h_difficulty", 3)
+                team_gw_fixtures[team_h][t] += 1.0
 
     ev_matrix = {}
     valid_ids = list(players.keys())
@@ -328,13 +332,15 @@ def get_fpl_data():
         base_ev = get_base_ev(p, xmins_overrides, weights)
         for t in range(1, 4):
             fdr = team_gw_fdr[t_id][t]
+            fix_count = team_gw_fixtures[t_id][t]
             fdr_multiplier = 1.0 + (3.0 - fdr) * 0.10 if fdr != 6.0 else 0.0
-            ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier)
+            # Automatically scales EV by 0 for Blanks, 1 for Singles, 2+ for Doubles
+            ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier * fix_count)
 
-    # Phase 1: MPO Solver Execution
+    # Phase 1: MPO Solver Execution (Target GW strictly passed for EO phasing)
     optimal_squad, transfer_plan = solve_multi_period_model(
         players, ev_matrix, current_squad_ids, total_liquid_budget, 
-        free_transfers, active_chip=ACTIVE_CHIP, horizons=4, risk_posture=RISK_POSTURE
+        free_transfers, active_chip=ACTIVE_CHIP, horizons=4, risk_posture=RISK_POSTURE, target_gw=target_gw
     )
 
     # Phase 2: Micro-Optimization Execution
@@ -373,12 +379,13 @@ def get_fpl_data():
         else: bench.append(p)
             
     starters.sort(key=lambda x: x["pos_id"])
-    bench_gk = [p for p in bench if p["pos_id"] == 1]
-    bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-    bench = bench_gk + bench_outfield
     
     starters_sorted_by_1gw = sorted(starters, key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-    vice = next((p for p in starters_sorted_by_1gw if not cap or p["id"] != cap["id"]), starters_sorted_by_1gw[0])
+    
+    # Phase 1 Gate: Vice-Captain Risk Dispersion
+    # Strictly isolates VC to ensure they do not play for the same team as the Captain
+    vice = next((p for p in starters_sorted_by_1gw if not cap or (p["id"] != cap["id"] and p["team_id"] != cap["team_id"])), starters_sorted_by_1gw[0])
+    
     optimal_squad = starters + bench
 
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
