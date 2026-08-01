@@ -6,8 +6,9 @@ import pulp
 
 def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_ids: list, 
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
-                            horizons: int = 4, risk_posture: str = "NEUTRAL", target_gw: int = 1):
-    """Solves the multi-period transfer optimization with Gameweek-Phase conditional gates."""
+                            horizons: int = 8, risk_posture: str = "NEUTRAL", target_gw: int = 1,
+                            w_sub_1: float = 0.05):
+    """Solves an 8-GW Deep-Tree Horizon with Dynamic Poisson-Binomial bench weighting."""
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
     valid_ids = list(players_dict.keys())
@@ -30,12 +31,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     ft = pulp.LpVariable.dicts("ft", gameweeks, lowBound=1, upBound=5, cat="Integer")
 
     objective = []
-    gamma = 0.95 
+    gamma = 0.85  # Steeper geometric decay for 8-GW horizon to balance macro vs micro planning
     
     if active_chip == "BENCH_BOOST":
         w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 1.0, 1.0, 1.0, 1.0
     else:
-        w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 0.05, 0.01, 0.00, 0.03
+        w_sub_2, w_sub_3, w_sub_gk = 0.01, 0.00, 0.03
 
     for t in gameweeks:
         gw_points = []
@@ -43,7 +44,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             p = players_dict[i]
             ev = ev_matrix[i][t]
             
-            # Phase 3 Gate: Automatically switch to Top 10k EO once global template settles
             if target_gw >= 3:
                 ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
             else:
@@ -74,13 +74,11 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
 
     model += pulp.lpSum(objective)
 
-    # Phase 2 Gate: Helper function for asymmetric FPL economics (50% sell tax)
     def get_future_sell_price(player, periods_ahead):
         base = player["cost"]
         delta = player.get("price_delta_prob", 0.0) * periods_ahead
         future = base + delta
-        if future > base:
-            return base + ((future - base) * 0.5)
+        if future > base: return base + ((future - base) * 0.5)
         return future
 
     for t in gameweeks:
@@ -130,7 +128,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                 model += hits[0] == 0
                 model += ft[0] == 1
         else:
-            # Safely executes the exact 50% FPL profit math for future purchasing power
             model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([get_future_sell_price(players_dict[i], t-1) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
             
             for i in valid_ids:
