@@ -6,19 +6,17 @@ import pulp
 
 def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_ids: list, 
                             current_bank: float, free_transfers_avail, active_chip: str = "NONE", 
-                            horizons: int = 4, risk_posture: str = "NEUTRAL"):
-    """Solves the multi-period transfer and selection optimization model with hierarchical bench weighting."""
+                            horizons: int = 4, risk_posture: str = "NEUTRAL", target_gw: int = 1):
+    """Solves the multi-period transfer optimization with Gameweek-Phase conditional gates."""
     model = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
     
     valid_ids = list(players_dict.keys())
     gameweeks = list(range(horizons))
     
-    # Core Decision Variables
     squad = pulp.LpVariable.dicts("squad", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     starter = pulp.LpVariable.dicts("starter", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     captain = pulp.LpVariable.dicts("captain", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     
-    # Hierarchical Bench Slot Variables
     sub_gk = pulp.LpVariable.dicts("sub_gk", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     sub_1 = pulp.LpVariable.dicts("sub_1", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
     sub_2 = pulp.LpVariable.dicts("sub_2", ((i, t) for i in valid_ids for t in gameweeks), cat="Binary")
@@ -32,13 +30,11 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
     ft = pulp.LpVariable.dicts("ft", gameweeks, lowBound=1, upBound=5, cat="Integer")
 
     objective = []
-    gamma = 0.95  # Temporal discount factor
+    gamma = 0.95 
     
-    # Bench Weighting Logic
     if active_chip == "BENCH_BOOST":
         w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 1.0, 1.0, 1.0, 1.0
     else:
-        # Heavily defund Sub 1 weight to 0.05 to prevent premium capital traps
         w_sub_1, w_sub_2, w_sub_3, w_sub_gk = 0.05, 0.01, 0.00, 0.03
 
     for t in gameweeks:
@@ -47,8 +43,12 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             p = players_dict[i]
             ev = ev_matrix[i][t]
             
-            # Risk Posture Gravity
-            ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
+            # Phase 3 Gate: Automatically switch to Top 10k EO once global template settles
+            if target_gw >= 3:
+                ownership = p.get("top_10k_eo", p.get("own", 0.0)) / 100.0
+            else:
+                ownership = p.get("own", 0.0) / 100.0
+                
             if risk_posture == "SHIELD":
                 rank_gravity = (ev * (ownership ** 2) * 1.50)
             elif risk_posture == "CHASE":
@@ -60,7 +60,6 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
             trans_out_ev = p.get("transfers_out_event", 0)
             momentum_boost = max(0.0, ((trans_in_ev - trans_out_ev) / 100000.0) * 0.05)
             
-            # Objective: Maximize Starters, Captain, and uniquely weighted Bench Slots
             gw_points.append(
                 (ev * starter[i, t]) + 
                 ((ev + rank_gravity) * captain[i, t]) + 
@@ -75,27 +74,31 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
 
     model += pulp.lpSum(objective)
 
+    # Phase 2 Gate: Helper function for asymmetric FPL economics (50% sell tax)
+    def get_future_sell_price(player, periods_ahead):
+        base = player["cost"]
+        delta = player.get("price_delta_prob", 0.0) * periods_ahead
+        future = base + delta
+        if future > base:
+            return base + ((future - base) * 0.5)
+        return future
+
     for t in gameweeks:
-        # Legal Formation & Squad Size Constraints
         model += pulp.lpSum([squad[i, t] for i in valid_ids]) == 15
         model += pulp.lpSum([starter[i, t] for i in valid_ids]) == 11
         model += pulp.lpSum([captain[i, t] for i in valid_ids]) == 1
         
-        # Exact Bench Slot Constraints
         model += pulp.lpSum([sub_gk[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
         model += pulp.lpSum([sub_gk[i, t] for i in valid_ids if players_dict[i]["pos_id"] != 1]) == 0
-        
         model += pulp.lpSum([sub_1[i, t] for i in valid_ids if players_dict[i]["pos_id"] != 1]) == 1
         model += pulp.lpSum([sub_2[i, t] for i in valid_ids if players_dict[i]["pos_id"] != 1]) == 1
         model += pulp.lpSum([sub_3[i, t] for i in valid_ids if players_dict[i]["pos_id"] != 1]) == 1
         
-        # Positional Roster Bounds
         model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 2
         model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 2]) == 5
         model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 3]) == 5
         model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 4]) == 3
         
-        # Valid Starting XI Formation Constraints (>=3 DEF, >=3 MID, >=1 FWD)
         model += pulp.lpSum([starter[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 1]) == 1
         model += pulp.lpSum([starter[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 2]) >= 3
         model += pulp.lpSum([starter[i, t] for i in valid_ids if players_dict[i]["pos_id"] == 3]) >= 3
@@ -103,23 +106,16 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
 
         for i in valid_ids:
             model += captain[i, t] <= starter[i, t]
-            # Bind squad binary to the sum of starting and sub slot binaries
             model += squad[i, t] == starter[i, t] + sub_gk[i, t] + sub_1[i, t] + sub_2[i, t] + sub_3[i, t]
 
-        # Club Maximum Limit
         team_ids = set(p["team_id"] for p in players_dict.values())
         for t_id in team_ids:
             model += pulp.lpSum([squad[i, t] for i in valid_ids if players_dict[i]["team_id"] == t_id]) <= 3
 
-        # Rolling Financial Budget Constraint (Future Price Volatility Included)
         if t == 0:
             starting_budget = current_bank + sum(players_dict[i].get("selling_price", players_dict[i]["cost"]) for i in current_squad_ids if i in valid_ids) if current_squad_ids else 100.0
             model += pulp.lpSum([players_dict[i]["cost"] * squad[i, t] for i in valid_ids]) + bank[t] <= starting_budget
-        else:
-            model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * (t-1))) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
-
-        # Transfer Balance & Banking Economics
-        if t == 0:
+            
             if current_squad_ids and len(current_squad_ids) == 15 and free_transfers_avail != "Unlimited":
                 for i in valid_ids:
                     if i in current_squad_ids:
@@ -134,6 +130,9 @@ def solve_multi_period_model(players_dict: dict, ev_matrix: dict, current_squad_
                 model += hits[0] == 0
                 model += ft[0] == 1
         else:
+            # Safely executes the exact 50% FPL profit math for future purchasing power
+            model += pulp.lpSum([(players_dict[i]["cost"] + (players_dict[i].get("price_delta_prob", 0.0) * t)) * squad[i, t] for i in valid_ids]) + bank[t] <= pulp.lpSum([get_future_sell_price(players_dict[i], t-1) * squad[i, t-1] for i in valid_ids]) + bank[t-1]
+            
             for i in valid_ids:
                 model += squad[i, t] == squad[i, t-1] + trans_in[i, t] - trans_out[i, t]
             model += pulp.lpSum([trans_in[i, t] for i in valid_ids]) <= ft[t-1] + hits[t]
