@@ -1,6 +1,8 @@
 """
 fpl_bot.py — Primary Execution Script & Discord Interface
 """
+from dotenv import load_dotenv
+load_dotenv()
 
 import os
 import sys
