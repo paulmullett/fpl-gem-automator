@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Aggressive Name Matching)
+ml_engine/train_models.py — XGBoost Predictive Engine (Context-Aware Matching)
 """
 
 import pandas as pd
@@ -19,45 +19,70 @@ def strip_accents(text):
     except Exception:
         return str(text).lower().strip()
 
-def find_best_match(fpl_row, fbref_names_list):
+def find_best_match(fpl_row, fbref_df):
+    """
+    Multi-tier matching: Exact -> Compact Substring -> Team-Filtered Fuzzy -> Direct Fuzzy.
+    """
     web_name = strip_accents(fpl_row.get('web_name', ''))
     first_name = strip_accents(fpl_row.get('first_name', ''))
     second_name = strip_accents(fpl_row.get('second_name', ''))
     full_name = f"{first_name} {second_name}".strip()
+    fpl_team = strip_accents(fpl_row.get('team_code', ''))
     
-    if full_name in fbref_names_list:
+    fbref_names = fbref_df['clean_fbref_name'].tolist()
+    
+    # 1. Exact full name match
+    if full_name in fbref_names:
         return full_name
         
-    if web_name in fbref_names_list:
+    # 2. Exact web name match
+    if web_name in fbref_names:
         return web_name
         
-    # Strip spaces and punctuation for highly aggressive substring matching
+    # Prepare compact strings (strip spaces, dashes, dots)
     web_compact = web_name.replace(" ", "").replace("-", "").replace(".", "")
     full_compact = full_name.replace(" ", "").replace("-", "").replace(".", "")
     second_compact = second_name.replace(" ", "").replace("-", "").replace(".", "")
     
-    for fb_name in fbref_names_list:
+    # 3. Compact substring matching
+    for idx, row in fbref_df.iterrows():
+        fb_name = row['clean_fbref_name']
         fb_compact = fb_name.replace(" ", "").replace("-", "").replace(".", "")
         if web_compact in fb_compact and len(web_compact) > 2:
             return fb_name
         if second_compact in fb_compact and len(second_compact) > 3:
             return fb_name
-            
-    # Forgiving fuzzy match
-    fuzzy = difflib.get_close_matches(full_name, fbref_names_list, n=1, cutoff=0.60)
+
+    # 4. Team-filtered fuzzy match (if FBref team data is available)
+    if 'team' in fbref_df.columns:
+        team_subset = fbref_df[fbref_df['clean_team'].str.contains(fpl_team, na=False)]
+        if not team_subset.empty:
+            team_names = team_subset['clean_fbref_name'].tolist()
+            fuzzy_team = difflib.get_close_matches(full_name, team_names, n=1, cutoff=0.50)
+            if fuzzy_team:
+                return fuzzy_team[0]
+            fuzzy_web = difflib.get_close_matches(web_name, team_names, n=1, cutoff=0.50)
+            if fuzzy_web:
+                return fuzzy_web[0]
+
+    # 5. Global forgiving fuzzy match
+    fuzzy = difflib.get_close_matches(full_name, fbref_names, n=1, cutoff=0.50)
     if fuzzy:
         return fuzzy[0]
         
     return None
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets using Fuzzy Logic...")
+    logger.info("Aligning FPL and FBref datasets using Context-Aware Fuzzy Logic...")
     
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
-        fbref_names_list = fbref_df['clean_fbref_name'].tolist()
-        
-        fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_names_list), axis=1)
+        if 'team' in fbref_df.columns:
+            fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents)
+        else:
+            fbref_df['clean_team'] = ""
+            
+        fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
         
         df = pd.merge(
             fpl_df, 
