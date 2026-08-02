@@ -1,12 +1,9 @@
 name: FPL Master Quantitative Bot
 
 on:
-  # 1. CRON SCHEDULE: Runs completely autonomously twice a week
   schedule:
     - cron: '0 18 * * 4'  # Thursday evenings (Pre-weekend prep)
     - cron: '0 20 * * 0'  # Sunday evenings (Post-weekend review)
-
-  # 2. HUMAN-IN-THE-LOOP: Manual trigger with control panel inputs
   workflow_dispatch:
     inputs:
       run_type:
@@ -46,7 +43,7 @@ on:
 
 jobs:
   run-fpl-bot:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -62,8 +59,6 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run ML Data Pipeline
-        env:
-          WEBSHARE_PROXY: ${{ secrets.WEBSHARE_PROXY }}
         run: python run_ml_pipeline.py
 
       - name: Execute MILP Solver & Discord Oracle
@@ -75,10 +70,9 @@ jobs:
           ACTIVE_CHIP: ${{ github.event.inputs.active_chip || 'NONE' }}
           XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture || 'NEUTRAL' }}
-          WEBSHARE_PROXY: ${{ secrets.WEBSHARE_PROXY }}
         run: python fpl_bot.py
         
-      - name: Commit Updated State Files (fpl_state.json & ml_projections.json)
+      - name: Commit Updated State Files
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"

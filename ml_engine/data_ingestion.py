@@ -1,8 +1,6 @@
 """
 ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine
 """
-
-import os
 import logging
 import pandas as pd
 import requests
@@ -10,22 +8,7 @@ import soccerdata as sd
 
 logger = logging.getLogger(__name__)
 
-def setup_proxy():
-    """
-    Injects the Webshare rotating proxy endpoint into the environment if present.
-    """
-    proxy = os.environ.get("WEBSHARE_PROXY", "").strip()
-    if proxy:
-        if not proxy.startswith("http"):
-            proxy = f"http://{proxy}"
-        os.environ["HTTP_PROXY"] = proxy
-        os.environ["HTTPS_PROXY"] = proxy
-        logger.info("Successfully configured Webshare rotating proxy for FBref request.")
-
 def fetch_fpl_data() -> pd.DataFrame:
-    """
-    Fetches official player metadata directly from the FPL API bootstrap-static endpoint.
-    """
     url = "https://fantasy.premierleague.com/api/bootstrap-static/"
     logger.info("Fetching live player data from official FPL API...")
     try:
@@ -47,10 +30,6 @@ def fetch_fpl_data() -> pd.DataFrame:
         return pd.DataFrame()
 
 def fetch_fbref_data(leagues="ENG-Premier League", seasons="2425") -> pd.DataFrame:
-    """
-    Scrapes advanced player metrics (xG, npxG, xAG) from FBref using soccerdata via rotating proxy.
-    """
-    setup_proxy()
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
@@ -85,9 +64,9 @@ def fetch_fbref_data(leagues="ENG-Premier League", seasons="2425") -> pd.DataFra
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
 
-        logger.info(f"Successfully scraped {len(clean_df)} player records from FBref via rotating proxy.")
+        logger.info(f"Successfully scraped {len(clean_df)} player records from FBref natively.")
         return clean_df
 
     except Exception as e:
-        logger.error(f"Error fetching FBref data via proxy: {e}")
+        logger.error(f"Error fetching FBref data: {e}")
         return pd.DataFrame()
