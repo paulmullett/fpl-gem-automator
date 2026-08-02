@@ -5,7 +5,7 @@ import json
 import logging
 import sys
 
-from ml_engine.data_ingestion import fetch_fpl_data, fetch_fbref_data
+from ml_engine.data_ingestion import fetch_fpl_data
 from ml_engine.train_models import generate_ml_projections
 
 # Setup clean terminal logging
@@ -15,16 +15,15 @@ logger = logging.getLogger(__name__)
 def main():
     logger.info("=== STARTING FPL MACHINE LEARNING PIPELINE ===")
     
-    # 1. Scrape the data
+    # 1. Scrape the official FPL data (includes Opta xG/xA stats)
     fpl_data = fetch_fpl_data()
-    fbref_data = fetch_fbref_data()
     
-    if fpl_data.empty or fbref_data.empty:
-        logger.error("Critical data missing (Scraper failed or blocked). Aborting pipeline.")
+    if fpl_data.empty:
+        logger.error("Critical FPL API data missing. Aborting pipeline.")
         sys.exit(1)
 
-    # 2. Train Models & Predict
-    projections = generate_ml_projections(fpl_data, fbref_data)
+    # 2. Train Models & Predict using native data
+    projections = generate_ml_projections(fpl_data)
     
     # 3. Save JSON Payload for the Bot to read
     output_file = "ml_projections.json"
