@@ -1,0 +1,33 @@
+name: FPL Player Head-to-Head Oracle
+
+on:
+  workflow_dispatch:
+    inputs:
+      players:
+        description: 'Players to compare (comma-separated, e.g. saka, foden)'
+        required: true
+        type: string
+
+jobs:
+  run-comparison:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Execute H2H Comparison Engine
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          PLAYER_COMPARE: ${{ github.event.inputs.players }}
+        run: python fpl_compare_players.py
