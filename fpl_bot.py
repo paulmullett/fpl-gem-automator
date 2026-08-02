@@ -34,7 +34,7 @@ DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
 WORKFLOW_INPUT = os.environ.get("MANUAL_TRIGGER", "auto")
 XMINS_INPUT = os.environ.get("XMINS_INPUT", "")
-ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper() 
+ACTIVE_CHIP = os.environ.get("ACTIVE_CHIP", "NONE").upper()
 RISK_POSTURE = os.environ.get("RISK_POSTURE", "NEUTRAL")
 STATE_FILE_PATH = "fpl_state.json"
 

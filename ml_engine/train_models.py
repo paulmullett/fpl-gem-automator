@@ -1,50 +1,89 @@
-import xgboost as xgb
-import lightgbm as lgb
+"""
+ml_engine/train_models.py — XGBoost Predictive Engine
+"""
+
 import pandas as pd
+import xgboost as xgb
 import numpy as np
 import logging
 
-logger = logging.getLogger("ModelTrainer")
+logger = logging.getLogger(__name__)
 
-class ModelTrainer:
-    def __init__(self):
-        self.team_model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100)
-        self.share_model = xgb.XGBRegressor(objective='reg:squarederror', n_estimators=100)
-        self.xmins_model = lgb.LGBMRegressor(n_estimators=100)
-
-    def run_pipeline(self, df):
-        logger.info("Executing individualized projection engine...")
-        projections = {}
-
-        if df.empty:
-            return projections
-
-        for idx, row in df.iterrows():
-            pid = str(row.get('id', 0))
-            if pid == "0":
-                continue
-
-            xmins = row.get('calculated_xmins', 0.0)
-            xmins = 0.0 if pd.isna(xmins) else float(xmins)
-
-            ev_1gw = row.get('calculated_ev_1gw', 0.0)
-            ev_1gw = 0.0 if pd.isna(ev_1gw) else float(ev_1gw)
-
-            pos_id = row.get('element_type', 3)
-
-            decay_factor = 6.8 if pos_id in [1, 2] else 7.2
-            ev_8gw = round(ev_1gw * decay_factor, 2)
-
-            sigma = ev_1gw * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30))
-            floor = max(0.0, round(ev_1gw - (sigma * 1.5), 1))
-            ceiling = round(ev_1gw + (sigma * 2.2), 1)
-
-            projections[pid] = {
-                "ml_xmins": xmins,
-                "ml_ev_1gw": ev_1gw,
-                "ml_ev_8gw": ev_8gw,
-                "ml_variance_floor": floor,
-                "ml_variance_ceiling": ceiling
-            }
-
-        return projections
+def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
+    """
+    Merges datasets and runs an XGBoost regression to predict Expected Value (EV).
+    """
+    logger.info("Aligning FPL and FBref datasets for Machine Learning...")
+    
+    # 1. Clean names for merging
+    fpl_df['match_name'] = fpl_df['web_name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
+    fbref_df['match_name'] = fbref_df['name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
+    
+    # Drop duplicates to prevent merge explosions
+    fbref_df = fbref_df.drop_duplicates(subset=['match_name'])
+    
+    # Merge datasets
+    df = pd.merge(fpl_df, fbref_df, on='match_name', how='left')
+    
+    # ---------------------------------------------------------
+    # FAILSAFE: Guarantee columns exist even if FBref changes headers
+    # ---------------------------------------------------------
+    essential_cols = ['fbref_xg', 'fbref_npxg', 'fbref_xag', 'minutes_played']
+    for col in essential_cols:
+        if col not in df.columns:
+            logger.warning(f"Column '{col}' missing from FBref scrape. Defaulting to 0.0.")
+            df[col] = 0.0
+            
+    # Fill missing values for players not found in FBref (e.g. promoted players)
+    df.fillna({col: 0.0 for col in essential_cols}, inplace=True)
+    
+    # 2. FEATURE ENGINEERING
+    logger.info("Engineering per-90 metrics for the XGBoost model...")
+    df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
+    
+    df['xg_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xg'] / df['minutes_played']) * 90, 0)
+    df['xag_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xag'] / df['minutes_played']) * 90, 0)
+    
+    # 3. DEFINE MODEL ARCHITECTURE
+    features = ['cost', 'xg_per_90', 'xag_per_90']
+    X = df[features].copy()
+    
+    y = pd.to_numeric(df['ep_next'], errors='coerce').fillna(0.0)
+    
+    logger.info(f"Training XGBoost Regressor on {len(X)} players...")
+    
+    model = xgb.XGBRegressor(
+        n_estimators=100,
+        learning_rate=0.05,
+        max_depth=4,
+        random_state=42,
+        objective='reg:squarederror'
+    )
+    model.fit(X, y)
+    
+    # 4. GENERATE PREDICTIONS
+    df['ml_predicted_ev'] = model.predict(X)
+    df['ml_predicted_ev'] = df['ml_predicted_ev'].clip(lower=0.0)
+    
+    # 5. BUILD JSON PAYLOAD
+    projections = {}
+    for _, row in df.iterrows():
+        pid = str(row['id'])
+        
+        status_mult = 1.0 if row['status'] == 'a' else (0.0 if row['status'] in ['d', 'i', 's', 'u'] else 0.5)
+        ml_xmins = min(90.0, float(row.get('minutes_played', 0.0) / 38.0) * status_mult)
+        if row['status'] == 'a' and float(row.get('ep_next', 0)) > 1.5:
+            ml_xmins = max(75.0, ml_xmins)
+        
+        base_ev = float(row['ml_predicted_ev'])
+        
+        projections[pid] = {
+            "ml_xmins": round(ml_xmins, 1),
+            "ml_ev_1gw": round(base_ev, 2),
+            "ml_ev_8gw": round(base_ev * 8 * 0.95, 2),
+            "ml_variance_floor": round(base_ev * 0.6, 2),
+            "ml_variance_ceiling": round(base_ev * 1.5, 2)
+        }
+        
+    logger.info(f"Successfully generated ML projections for {len(projections)} players.")
+    return projections

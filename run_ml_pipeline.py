@@ -1,29 +1,37 @@
-import os
+"""
+run_ml_pipeline.py — Master Execution File for the ML Suite
+"""
 import json
-from ml_engine.data_ingestion import IngestionEngine
-from ml_engine.entity_resolution import ResolutionEngine
-from ml_engine.feature_engineering import FeatureEngine
-from ml_engine.train_models import ModelTrainer
+import logging
+import sys
+
+from ml_engine.data_ingestion import fetch_fpl_data, fetch_fbref_data
+from ml_engine.train_models import generate_ml_projections
+
+# Setup clean terminal logging
+logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 def main():
-    print("--- FPL ML PIPELINE INITIALIZATION ---")
+    logger.info("=== STARTING FPL MACHINE LEARNING PIPELINE ===")
     
-    ingestor = IngestionEngine()
-    raw_fpl, raw_event = ingestor.execute()
+    # 1. Scrape the data
+    fpl_data = fetch_fpl_data()
+    fbref_data = fetch_fbref_data()
     
-    resolver = ResolutionEngine()
-    merged_data = resolver.map_entities(raw_fpl, raw_event)
+    if fpl_data.empty or fbref_data.empty:
+        logger.error("Critical data missing (Scraper failed or blocked). Aborting pipeline.")
+        sys.exit(1)
+
+    # 2. Train Models & Predict
+    projections = generate_ml_projections(fpl_data, fbref_data)
     
-    engineer = FeatureEngine()
-    model_ready_data = engineer.build_features(merged_data)
-    
-    trainer = ModelTrainer()
-    projections = trainer.run_pipeline(model_ready_data)
-    
-    with open("ml_projections.json", "w") as f:
+    # 3. Save JSON Payload for the Bot to read
+    output_file = "ml_projections.json"
+    with open(output_file, 'w') as f:
         json.dump(projections, f, indent=4)
         
-    print(f"--- PIPELINE COMPLETE: ml_projections.json generated ({len(projections)} entities) ---")
+    logger.info(f"=== PIPELINE COMPLETE: Outputs locked to {output_file} ===")
 
 if __name__ == "__main__":
     main()
