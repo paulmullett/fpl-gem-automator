@@ -1,34 +1,52 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Native FPL Opta Data)
+ml_engine/train_models.py — XGBoost Predictive Engine (FBref integration)
 """
 
 import pandas as pd
 import xgboost as xgb
+import numpy as np
 import logging
 
 logger = logging.getLogger(__name__)
 
-def generate_ml_projections(df: pd.DataFrame) -> dict:
+def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     """
-    Runs an XGBoost regression to predict Expected Value (EV) using native Opta metrics.
+    Merges datasets and runs an XGBoost regression to predict Expected Value (EV).
     """
-    logger.info("Engineering ML metrics using FPL's native Opta data...")
+    logger.info("Aligning FPL and FBref datasets for Machine Learning...")
     
-    # 1. FEATURE ENGINEERING
+    # 1. Clean names for merging
+    fpl_df['match_name'] = fpl_df['web_name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
+    
+    if not fbref_df.empty:
+        fbref_df['match_name'] = fbref_df['name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
+        fbref_df = fbref_df.drop_duplicates(subset=['match_name'])
+        df = pd.merge(fpl_df, fbref_df, on='match_name', how='left')
+    else:
+        df = fpl_df.copy()
+    
+    # ---------------------------------------------------------
+    # FAILSAFE: Guarantee columns exist even if FBref fails
+    # ---------------------------------------------------------
+    essential_cols = ['fbref_xg', 'fbref_npxg', 'fbref_xag', 'minutes_played']
+    for col in essential_cols:
+        if col not in df.columns:
+            logger.warning(f"Column '{col}' missing. Defaulting to 0.0.")
+            df[col] = 0.0
+            
+    df.fillna({col: 0.0 for col in essential_cols}, inplace=True)
+    
+    # 2. FEATURE ENGINEERING
+    logger.info("Engineering per-90 metrics for the XGBoost model...")
     df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
     
-    # Extract official FPL Opta underlying stats
-    df['opt_xg_90'] = pd.to_numeric(df.get('expected_goals_per_90', 0), errors='coerce').fillna(0.0)
-    df['opt_xa_90'] = pd.to_numeric(df.get('expected_assists_per_90', 0), errors='coerce').fillna(0.0)
-    df['opt_xgc_90'] = pd.to_numeric(df.get('expected_goals_conceded_per_90', 0), errors='coerce').fillna(0.0)
-    df['minutes_played'] = pd.to_numeric(df.get('minutes', 0), errors='coerce').fillna(0.0)
+    df['xg_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xg'] / df['minutes_played']) * 90, 0)
+    df['xag_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xag'] / df['minutes_played']) * 90, 0)
     
-    # 2. DEFINE MODEL ARCHITECTURE
-    # We now train the model based on Price, xG/90, xA/90, and Expected Goals Conceded/90
-    features = ['cost', 'opt_xg_90', 'opt_xa_90', 'opt_xgc_90']
+    # 3. DEFINE MODEL ARCHITECTURE
+    features = ['cost', 'xg_per_90', 'xag_per_90']
     X = df[features].copy()
     
-    # Proxy Target for initial weights
     y = pd.to_numeric(df['ep_next'], errors='coerce').fillna(0.0)
     
     logger.info(f"Training XGBoost Regressor on {len(X)} players...")
@@ -42,11 +60,11 @@ def generate_ml_projections(df: pd.DataFrame) -> dict:
     )
     model.fit(X, y)
     
-    # 3. GENERATE PREDICTIONS
+    # 4. GENERATE PREDICTIONS
     df['ml_predicted_ev'] = model.predict(X)
     df['ml_predicted_ev'] = df['ml_predicted_ev'].clip(lower=0.0)
     
-    # 4. BUILD JSON PAYLOAD
+    # 5. BUILD JSON PAYLOAD
     projections = {}
     for _, row in df.iterrows():
         pid = str(row['id'])
