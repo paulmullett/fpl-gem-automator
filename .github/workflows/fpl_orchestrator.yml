@@ -62,6 +62,8 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run ML Data Pipeline
+        env:
+          WEBSHARE_PROXY: ${{ secrets.WEBSHARE_PROXY }}
         run: python run_ml_pipeline.py
 
       - name: Execute MILP Solver & Discord Oracle
@@ -73,6 +75,7 @@ jobs:
           ACTIVE_CHIP: ${{ github.event.inputs.active_chip || 'NONE' }}
           XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture || 'NEUTRAL' }}
+          WEBSHARE_PROXY: ${{ secrets.WEBSHARE_PROXY }}
         run: python fpl_bot.py
         
       - name: Commit Updated State Files (fpl_state.json & ml_projections.json)
