@@ -1,37 +1,87 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (FBref integration)
+ml_engine/train_models.py — XGBoost Predictive Engine (Robust FBref Matching)
 """
 
 import pandas as pd
 import xgboost as xgb
 import numpy as np
 import logging
+import unicodedata
+import difflib
 
 logger = logging.getLogger(__name__)
 
+def strip_accents(text):
+    """Removes special characters and accents, converts to lowercase."""
+    try:
+        text = str(text)
+        text = unicodedata.normalize('NFD', text).encode('ascii', 'ignore').decode("utf-8")
+        return text.lower().strip()
+    except Exception:
+        return str(text).lower().strip()
+
+def find_best_match(fpl_row, fbref_names_list):
+    """Cascading logic to find the best FBref name for an FPL player."""
+    web_name = strip_accents(fpl_row.get('web_name', ''))
+    first_name = strip_accents(fpl_row.get('first_name', ''))
+    second_name = strip_accents(fpl_row.get('second_name', ''))
+    full_name = f"{first_name} {second_name}".strip()
+    
+    # 1. Exact match on full name
+    if full_name in fbref_names_list:
+        return full_name
+        
+    # 2. Exact match on web name
+    if web_name in fbref_names_list:
+        return web_name
+        
+    # 3. Substring match (e.g., FPL 'salah' is in FBref 'mohamed salah')
+    # We split into words to prevent 'dan' matching 'jordan'
+    possible_matches = [name for name in fbref_names_list if web_name in name.split()]
+    if len(possible_matches) == 1:
+        return possible_matches[0]
+        
+    # 4. Fuzzy Match (string similarity > 75%)
+    fuzzy = difflib.get_close_matches(full_name, fbref_names_list, n=1, cutoff=0.75)
+    if fuzzy:
+        return fuzzy[0]
+        
+    return None
+
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     """
-    Merges datasets and runs an XGBoost regression to predict Expected Value (EV).
+    Merges datasets robustly and runs an XGBoost regression.
     """
-    logger.info("Aligning FPL and FBref datasets for Machine Learning...")
-    
-    # 1. Clean names for merging
-    fpl_df['match_name'] = fpl_df['web_name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
+    logger.info("Aligning FPL and FBref datasets using Fuzzy Logic...")
     
     if not fbref_df.empty:
-        fbref_df['match_name'] = fbref_df['name'].astype(str).str.lower().str.replace(r'[^a-z]', '', regex=True)
-        fbref_df = fbref_df.drop_duplicates(subset=['match_name'])
-        df = pd.merge(fpl_df, fbref_df, on='match_name', how='left')
+        # Clean FBref names
+        fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
+        fbref_names_list = fbref_df['clean_fbref_name'].tolist()
+        
+        # Apply the matching algorithm to every FPL player
+        fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_names_list), axis=1)
+        
+        # Merge on the newly matched names
+        df = pd.merge(
+            fpl_df, 
+            fbref_df, 
+            left_on='matched_fbref_name', 
+            right_on='clean_fbref_name', 
+            how='left'
+        )
+        
+        match_rate = df['matched_fbref_name'].notna().mean() * 100
+        logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
     else:
         df = fpl_df.copy()
     
     # ---------------------------------------------------------
-    # FAILSAFE: Guarantee columns exist even if FBref fails
+    # FAILSAFE: Guarantee columns exist
     # ---------------------------------------------------------
     essential_cols = ['fbref_xg', 'fbref_npxg', 'fbref_xag', 'minutes_played']
     for col in essential_cols:
         if col not in df.columns:
-            logger.warning(f"Column '{col}' missing. Defaulting to 0.0.")
             df[col] = 0.0
             
     df.fillna({col: 0.0 for col in essential_cols}, inplace=True)
