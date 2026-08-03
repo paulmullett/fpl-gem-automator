@@ -1,30 +1,9 @@
 """
-fpl_funcs.py — Core Mathematical & Utility Functions Engine
+fpl_funcs.py — Core Mathematical & Utility Functions Engine (Pre-Season Calibrated)
 """
 
 import math
-import json
-import os
-import logging
 from typing import Dict, Any, Optional
-
-logger = logging.getLogger(__name__)
-
-def load_ml_projections(filepath="ml_projections.json") -> Dict[str, Any]:
-    """Loads the automated ML pipeline projections."""
-    if not os.path.exists(filepath):
-        logger.warning(f"ML Projections file '{filepath}' not found. Falling back to heuristic engine.")
-        return {}
-
-    try:
-        with open(filepath, 'r') as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Error reading ML projections: {e}")
-        return {}
-
-# Global memory cache for ML projections payload
-ML_PROJECTIONS = load_ml_projections()
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
     try:
@@ -41,11 +20,13 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     own = _safe_float(p.get("own"), 0.0)
     cost = _safe_float(p.get("cost"), 4.0)
     pos_id = p.get("pos_id", 3)
-    
-    # Priority check for established starters with low market ownership (e.g., new transfers)
     ep_next = _safe_float(p.get("ep_next"), 0.0)
+
+    # Priority check for established starters or premium assets
     if own < 2.0 and ep_next >= 2.0:
         base_xmins = 75.0
+    elif cost >= 6.0:
+        base_xmins = 88.0
     else:
         base_cost = 4.0 if pos_id in [1, 2] else 4.5
         own_boost = min(1.5, (own / 10.0))
@@ -53,13 +34,13 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
         
         x = 2.5 * (effective_cost - (base_cost + 0.5))
         base_xmins = 90.0 / (1.0 + math.exp(-x))
-    
+
     if chance_raw is not None:
         chance_str = str(chance_raw)
         if chance_str == "25": base_xmins *= 0.25
         elif chance_str == "50": base_xmins *= 0.50
         elif chance_str == "75": base_xmins *= 0.75
-        
+
     return min(90.0, max(0.0, base_xmins))
 
 LEAGUE_BASE_STRENGTHS = {
@@ -78,11 +59,11 @@ LEAGUE_BASE_STRENGTHS = {
 def calculate_tier1_translation_factor(p: Dict[str, Any]) -> float:
     league = p.get("source_league", "Premier_League")
     if league == "Premier_League": return 1.00
-        
+
     pos_id = p.get("pos_id", 3)
     league_matrix = LEAGUE_BASE_STRENGTHS.get(league, {})
     base_coef = league_matrix.get(pos_id, 0.75)
-    
+
     age = int(p.get("age", 25))
     if age <= 22: age_modifier = 1.05
     elif age >= 29: age_modifier = 0.92
@@ -110,11 +91,11 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p = {}
     p["id"] = int(raw_p.get("id"))
     p["name"] = raw_p.get("web_name") or raw_p.get("name") or "Unknown"
-    
+
     team_id = raw_p.get("team")
     p["team_id"] = int(team_id) if team_id is not None else None
     p["team"] = teams_map.get(team_id, "UNK") if teams_map else str(raw_p.get("team", "UNK"))
-    
+
     pos_id = raw_p.get("element_type") or raw_p.get("position") or raw_p.get("pos_id")
     p["pos_id"] = int(pos_id) if pos_id is not None else 3
     p["pos"] = element_types_map.get(p["pos_id"], "UNK") if element_types_map else str(p["pos_id"])
@@ -128,10 +109,10 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["form"] = _safe_float(raw_p.get("form") or 0.0)
     p["total_points"] = int(raw_p.get("total_points") or 0)
     p["own"] = _safe_float(raw_p.get("selected_by_percent") or raw_p.get("own") or 0.0)
-    
+
     p["top_10k_eo"] = _safe_float(raw_p.get("top_10k_eo") or p["own"])
     p["price_delta_prob"] = _safe_float(raw_p.get("price_delta_prob") or 0.0)
-    
+
     p["chance_of_playing_next_round"] = raw_p.get("chance_of_playing_next_round", "")
     p["xgi_90"] = _safe_float(raw_p.get("expected_goal_involvements_per_90") or 0.0)
     p["xgc_90"] = _safe_float(raw_p.get("expected_goals_conceded_per_90") or 1.35)
@@ -156,10 +137,6 @@ def get_gameweek_state(bootstrap_data: Dict[str, Any]):
     return active_gw, target_gw
 
 def get_live_price_deltas(players_dict: dict) -> dict:
-    """
-    Attempts to fetch live price predictions from a market aggregator JSON.
-    Falls back to a Net Transfer heuristic proxy if the API is unreachable.
-    """
     deltas = {}
     try:
         raise ConnectionError("No external API provided, defaulting to Net Transfer heuristic.")
@@ -177,17 +154,10 @@ def get_live_price_deltas(players_dict: dict) -> dict:
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                 weights: Optional[Dict[str, float]] = None,
                 market_data: Optional[Dict[str, Any]] = None) -> float:
-    
-    # --- ML PIPELINE OVERRIDE ---
-    pid_str = str(p.get("id"))
-    if pid_str in ML_PROJECTIONS and ML_PROJECTIONS[pid_str].get("ml_ev_1gw", 0.0) > 0.0:
-        return float(ML_PROJECTIONS[pid_str]["ml_ev_1gw"])
-    # ----------------------------
-
     if isinstance(xmins_overrides, dict) and "xgi_weight" in xmins_overrides and weights is None:
         weights = xmins_overrides
         xmins_overrides = {}
-        
+
     if weights is None: weights = {}
     if xmins_overrides is None: xmins_overrides = {}
 
@@ -195,23 +165,30 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
     if xmins < 5.0: return 0.0
 
-    ep = _safe_float(p.get("ep_next"), 0.0)
     xgi = _safe_float(p.get("xgi_90"), 0.0)
     xgc = _safe_float(p.get("xgc_90"), 1.35)
     cost = _safe_float(p.get("cost"), 4.0)
     own = _safe_float(p.get("own"), 0.0)
-
     pos_id = p.get("pos_id", 3)
+
+    # PRE-SEASON FIX 1: If FPL API returns 0.0 for pre-season xGI, calculate positional cost-tier baseline
+    if xgi <= 0.01:
+        if pos_id == 4:    xgi = 0.40 + max(0.0, cost - 6.0) * 0.04
+        elif pos_id == 3:  xgi = 0.22 + max(0.0, cost - 5.5) * 0.03
+        elif pos_id == 2:  xgi = 0.08 + max(0.0, cost - 4.5) * 0.02
+        else:              xgi = 0.01
+
     mins_factor = xmins / 90.0
 
     team_name = p.get("team", "")
     team_xg_base = market_data[team_name].get("xG", 1.5) if market_data and team_name in market_data else 1.5
     baseline_xgi = team_xg_base * 0.01 if pos_id == 1 else (team_xg_base * 0.06 if pos_id == 2 else (team_xg_base * 0.18 if pos_id == 3 else team_xg_base * 0.30))
-    
+
+    # PRE-SEASON FIX 2: Establish confidence floor so low ownership doesn't squash premium assets
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
     cost_premium = max(0.0, cost - cost_threshold)
-    confidence = min(1.0, (own / 15.0) + (cost_premium / 2.0))
-    
+    confidence = max(0.80, min(1.0, (own / 15.0) + (cost_premium / 2.0)))
+
     translation_mult = calculate_tier1_translation_factor(p)
     adjusted_xgi = xgi * translation_mult
     shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
@@ -221,7 +198,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
 
     team_xga = xgc * mins_factor
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
-    
+
     if pos_id in [1, 2]: cs_points = (cs_prob * 4.0) * prob_60
     elif pos_id == 3: cs_points = (cs_prob * 1.0) * prob_60
     else: cs_points = 0.0
@@ -237,9 +214,8 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
 
-    raw_ev = app_points + attacking_points + cs_points + extra_defensive_points
-    xgi_mult = weights.get("xgi_weight", 0.70)
-    final_ev = (raw_ev * xgi_mult) + (ep * (1.0 - xgi_mult))
+    # PRE-SEASON FIX 3: Pure deterministic raw EV output (bypasses ep_next damping)
+    final_ev = app_points + attacking_points + cs_points + extra_defensive_points
     return max(0.0, final_ev)
 
 def get_variance_penalty(xmins: float) -> float:
@@ -251,14 +227,14 @@ def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float
                     risk_posture: str = "NEUTRAL") -> float:
     if xmins_overrides is None: xmins_overrides = {}
     ev_a = get_base_ev(p, xmins_overrides, weights, market_data)
-    
+
     pos_id = p.get("pos_id", 3)
     sigma = ev_a * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
     if risk_posture == "SHIELD":
         ev_a -= (sigma * 0.15)
     elif risk_posture == "CHASE":
         ev_a += (sigma * 0.15)
-    
+
     if market_data and p.get("team") in market_data:
         m_metrics = market_data[p.get("team")]
         if pos_id in [1, 2]:
@@ -269,10 +245,14 @@ def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float
             ev_a *= (0.75 + (0.25 * market_xg_mult))
 
     form = _safe_float(p.get("form"), 0.0)
-    ep = _safe_float(p.get("ep_next"), 0.0)
-    ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
     
-    return max(0.0, (0.70 * ev_a) + (0.30 * ev_b))
+    # PRE-SEASON FIX 4: Only blend EV_b when active in-season form data exists (>0.1)
+    if form > 0.1:
+        ep = _safe_float(p.get("ep_next"), 0.0)
+        ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
+        return max(0.0, (0.70 * ev_a) + (0.30 * ev_b))
+    else:
+        return max(0.0, ev_a)
 
 def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float], 
                  weights: Optional[Dict[str, float]] = None, 
@@ -280,25 +260,18 @@ def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float],
                  market_data: Optional[Dict[str, Any]] = None,
                  horizons: int = 8,
                  risk_posture: str = "NEUTRAL") -> float:
-    
-    # --- ML PIPELINE OVERRIDE ---
-    pid_str = str(p.get("id"))
-    if pid_str in ML_PROJECTIONS and ML_PROJECTIONS[pid_str].get("ml_ev_8gw", 0.0) > 0.0:
-        return float(ML_PROJECTIONS[pid_str]["ml_ev_8gw"])
-    # ----------------------------
-
     if weights is None: weights = {}
     if xmins_overrides is None: xmins_overrides = {}
 
     base_ev = get_base_ev(p, xmins_overrides, weights, market_data)
     pos_id = p.get("pos_id", 3)
     sigma = base_ev * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
-    
+
     if risk_posture == "SHIELD":
         base_ev -= (sigma * 0.15)
     elif risk_posture == "CHASE":
         base_ev += (sigma * 0.15)
-        
+
     if base_ev <= 0.0: return 0.0
 
     pid_str = str(p.get("id"))
