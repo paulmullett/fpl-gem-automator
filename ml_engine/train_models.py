@@ -26,37 +26,23 @@ def find_best_match(fpl_row, fbref_df):
     first_name = strip_accents(fpl_row.get('first_name', ''))
     second_name = strip_accents(fpl_row.get('second_name', ''))
     full_name = f"{first_name} {second_name}".strip()
-    fpl_team = strip_accents(fpl_row.get('team_code', ''))
     
+    # 0. Manual Overrides
     if web_name in NAME_OVERRIDES: return NAME_OVERRIDES[web_name]
     if full_name in NAME_OVERRIDES: return NAME_OVERRIDES[full_name]
     
     fbref_names = fbref_df['clean_fbref_name'].tolist()
     
+    # 1. Exact matches
     if full_name in fbref_names: return full_name
     if web_name in fbref_names: return web_name
-        
-    web_compact = web_name.replace(" ", "").replace("-", "").replace(".", "")
-    full_compact = full_name.replace(" ", "").replace("-", "").replace(".", "")
-    second_compact = second_name.replace(" ", "").replace("-", "").replace(".", "")
     
-    for idx, row in fbref_df.iterrows():
-        fb_name = row['clean_fbref_name']
-        fb_compact = fb_name.replace(" ", "").replace("-", "").replace(".", "")
-        if web_compact in fb_compact and len(web_compact) > 2: return fb_name
-        if second_compact in fb_compact and len(second_compact) > 3: return fb_name
-
-    if 'team' in fbref_df.columns:
-        team_subset = fbref_df[fbref_df['clean_team'].str.contains(fpl_team, na=False)]
-        if not team_subset.empty:
-            team_names = team_subset['clean_fbref_name'].tolist()
-            fuzzy_team = difflib.get_close_matches(full_name, team_names, n=1, cutoff=0.50)
-            if fuzzy_team: return fuzzy_team[0]
-            fuzzy_web = difflib.get_close_matches(web_name, team_names, n=1, cutoff=0.50)
-            if fuzzy_web: return fuzzy_web[0]
-
-    fuzzy = difflib.get_close_matches(full_name, fbref_names, n=1, cutoff=0.50)
+    # 2. Strict Fallback Fuzzy Match (Cutoff 0.85 prevents cross-league false positives)
+    fuzzy = difflib.get_close_matches(full_name, fbref_names, n=1, cutoff=0.85)
     if fuzzy: return fuzzy[0]
+    
+    fuzzy_web = difflib.get_close_matches(web_name, fbref_names, n=1, cutoff=0.85)
+    if fuzzy_web: return fuzzy_web[0]
         
     return None
 

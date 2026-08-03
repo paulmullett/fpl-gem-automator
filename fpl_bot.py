@@ -325,16 +325,6 @@ def get_fpl_data():
                 team_gw_fdr[team_h][t] = f.get("team_h_difficulty", 3)
                 team_gw_fixtures[team_h][t] += 1.0
 
-    # LOAD MACHINE LEARNING PROJECTIONS FROM ML PIPELINE
-    ml_projections = {}
-    if os.path.exists("ml_projections.json"):
-        try:
-            with open("ml_projections.json", "r") as f:
-                ml_projections = json.load(f)
-            print("ML ENGINE: Successfully loaded ml_projections.json into decision pipeline.")
-        except Exception as e:
-            print(f"WARNING: Could not read ml_projections.json: {e}")
-
     ev_matrix = {}
     valid_ids = list(players.keys())
     for pid in valid_ids:
@@ -343,17 +333,10 @@ def get_fpl_data():
         if p.get("status") not in ["a", "d", ""]: continue
             
         t_id = p["team_id"]
-        pid_str = str(pid)
-
-        # Calculate baseline heuristic & market EV
+        
+        # RESTORED: Pure deterministic EV model execution.
         heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
-
-        # Inject XGBoost ML EV if available (70% ML / 30% Market & Heuristic blend)
-        if pid_str in ml_projections and ml_projections[pid_str].get("ml_ev_1gw", 0) > 0:
-            ml_ev = float(ml_projections[pid_str]["ml_ev_1gw"])
-            ev_matrix[pid][0] = round((0.70 * ml_ev) + (0.30 * heuristic_ev), 2)
-        else:
-            ev_matrix[pid][0] = heuristic_ev
+        ev_matrix[pid][0] = heuristic_ev
 
         base_ev = ev_matrix[pid][0]
         
