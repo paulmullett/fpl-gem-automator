@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — Bottom-Up Expected Points (xP) Engine
+ml_engine/train_models.py — Calibrated Bottom-Up xP Engine (With BPS & Match Logging)
 """
 
 import pandas as pd
@@ -94,8 +94,23 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
         fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
+        
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
+        
         df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left')
+        
+        # --- RESTORED LOGGING FOR MATCH RATE ---
+        match_rate = df['matched_fbref_name'].notna().mean() * 100
+        logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
+        
+        unmatched_fpl = df[df['matched_fbref_name'].isnull()]
+        if not unmatched_fpl.empty:
+            logger.warning(f"--- UNMATCHED FPL PLAYERS ({len(unmatched_fpl)}) ---")
+            for _, row in unmatched_fpl.iterrows():
+                cost = float(row.get('now_cost', 0)) / 10
+                if cost > 4.5:
+                    logger.warning(f"HIGH VALUE UNMATCHED: {row.get('web_name')} ({row.get('team_code')}) - £{cost}m [Full Name: {row.get('first_name')} {row.get('second_name')}]")
+            logger.warning("-----------------------------------------")
     else:
         df = fpl_df.copy()
         
@@ -104,15 +119,11 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         if col not in df.columns: df[col] = 0.0
     df.fillna({col: 0.0 for col in essential_cols}, inplace=True)
 
-    # ---------------------------------------------------------
-    # BOTTOM-UP EXPECTED POINTS (xP) CALCULATOR
-    # ---------------------------------------------------------
     logger.info("Generating Bottom-Up Expected Points (xP) Projections...")
     
     df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
     df['pos_type'] = pd.to_numeric(df['element_type'], errors='coerce').fillna(3) # 1:GK, 2:DEF, 3:MID, 4:FWD
     
-    # Adaptive Bayesian Priors (Reduced gravity to 3 full matches to preserve superstar metrics)
     prior_xg = {1: 0.00, 2: 0.03, 3: 0.12, 4: 0.32}
     prior_xag = {1: 0.00, 2: 0.04, 3: 0.10, 4: 0.12}
     
@@ -125,7 +136,10 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     df['xg_per_90'] = (df['fbref_xg'] + (df['prior_xg90'] * prior_90s)) / (player_90s + prior_90s)
     df['xag_per_90'] = (df['fbref_xag'] + (df['prior_xag90'] * prior_90s)) / (player_90s + prior_90s)
     
-    # Position-Specific Point Rules
+    # --- POSITIONAL SANITY CAP ---
+    # Defenders cannot realistically average >0.12 xG/90 over a full season.
+    df.loc[df['pos_type'] == 2, 'xg_per_90'] = df.loc[df['pos_type'] == 2, 'xg_per_90'].clip(upper=0.12)
+    
     goal_pts = {1: 6.0, 2: 6.0, 3: 5.0, 4: 4.0}
     cs_pts = {1: 4.0, 2: 4.0, 3: 1.0, 4: 0.0}
     
@@ -148,7 +162,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         else:
             status_mult = 1.0
             
-        # Realistic xMins baseline
         if status_mult > 0:
             if past_mins > 1500 or cost >= 9.0:
                 xmins = 85.0 * status_mult
@@ -161,7 +174,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
         match_fraction = xmins / 90.0
         
-        # Component Calculations
         exp_goals = row['xg_per_90'] * match_fraction
         exp_assists = row['xag_per_90'] * match_fraction
         exp_cs = row['cs_per_90'] * match_fraction
@@ -171,8 +183,11 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         pts_cs = exp_cs * row['pts_cs']
         pts_appearance = 2.0 if xmins >= 60 else (1.0 if xmins > 0 else 0.0)
         
-        # Base Single Gameweek Expected Value (xP)
-        base_ev = pts_goals + pts_assists + pts_cs + pts_appearance
+        # --- BONUS POINTS SYSTEM (BPS) MODELING ---
+        # Strikers/attacking mids generate significant BPS on goals/assists.
+        exp_bps = (exp_goals * 1.2) + (exp_assists * 0.7)
+        
+        base_ev = pts_goals + pts_assists + pts_cs + pts_appearance + exp_bps
         
         if status == 'a' and xmins >= 60:
             base_ev = max(base_ev, 2.0)
