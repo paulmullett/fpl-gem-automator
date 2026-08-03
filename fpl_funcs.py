@@ -1,5 +1,5 @@
 """
-fpl_funcs.py — Core Mathematical & Utility Functions Engine (Pre-Season Calibrated)
+fpl_funcs.py — Core Mathematical & Utility Functions Engine (Pre-Season Calibrated & Soft-Capped)
 """
 
 import math
@@ -22,8 +22,11 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     pos_id = p.get("pos_id", 3)
     ep_next = _safe_float(p.get("ep_next"), 0.0)
 
+    # STRICT FRINGE INTERCEPT: Traps overpriced academy players (e.g., Dowman) from exploiting the logistic curve
+    if cost < 6.0 and own < 1.5 and ep_next < 1.5:
+        base_xmins = 15.0 + (own * 10.0)
     # Priority check for established starters or premium assets
-    if own < 2.0 and ep_next >= 2.0:
+    elif own < 2.0 and ep_next >= 2.0:
         base_xmins = 75.0
     elif cost >= 6.0:
         base_xmins = 88.0
@@ -165,13 +168,20 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
     if xmins < 5.0: return 0.0
 
-    xgi = _safe_float(p.get("xgi_90"), 0.0)
+    raw_xgi = _safe_float(p.get("xgi_90"), 0.0)
+    
+    # ASYMPTOTIC SOFT-CAP: Dampens extreme small-sample anomalies without limiting true elites
+    if raw_xgi > 1.0:
+        xgi = 1.0 + ((raw_xgi - 1.0) * 0.4)
+    else:
+        xgi = raw_xgi
+        
     xgc = _safe_float(p.get("xgc_90"), 1.35)
     cost = _safe_float(p.get("cost"), 4.0)
     own = _safe_float(p.get("own"), 0.0)
+    ep_next = _safe_float(p.get("ep_next"), 0.0)
     pos_id = p.get("pos_id", 3)
 
-    # PRE-SEASON FIX 1: If FPL API returns 0.0 for pre-season xGI, calculate positional cost-tier baseline
     if xgi <= 0.01:
         if pos_id == 4:    xgi = 0.40 + max(0.0, cost - 6.0) * 0.04
         elif pos_id == 3:  xgi = 0.22 + max(0.0, cost - 5.5) * 0.03
@@ -184,12 +194,19 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     team_xg_base = market_data[team_name].get("xG", 1.5) if market_data and team_name in market_data else 1.5
     baseline_xgi = team_xg_base * 0.01 if pos_id == 1 else (team_xg_base * 0.06 if pos_id == 2 else (team_xg_base * 0.18 if pos_id == 3 else team_xg_base * 0.30))
 
-    # PRE-SEASON FIX 2: Establish confidence floor so low ownership doesn't squash premium assets
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
     cost_premium = max(0.0, cost - cost_threshold)
-    confidence = max(0.80, min(1.0, (own / 15.0) + (cost_premium / 2.0)))
-
+    
+    # MULTI-VARIATE CONFIDENCE: Blends Cost, Ownership, and FPL's native expectation
+    raw_confidence = (cost_premium / 4.0) + (own / 30.0) + (max(0, ep_next - 2.0) * 0.15)
+    
     translation_mult = calculate_tier1_translation_factor(p)
+    # Protect elite foreign transfers with strong UEFA coefficients from washing out due to low initial ownership
+    if translation_mult > 0.90 and own < 5.0 and pos_id in [3, 4]:
+        confidence = min(1.0, max(raw_confidence, 0.60))
+    else:
+        confidence = min(1.0, max(raw_confidence, 0.25))
+
     adjusted_xgi = xgi * translation_mult
     shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
 
@@ -214,7 +231,6 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
 
-    # PRE-SEASON FIX 3: Pure deterministic raw EV output (bypasses ep_next damping)
     final_ev = app_points + attacking_points + cs_points + extra_defensive_points
     return max(0.0, final_ev)
 
@@ -246,7 +262,6 @@ def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float
 
     form = _safe_float(p.get("form"), 0.0)
     
-    # PRE-SEASON FIX 4: Only blend EV_b when active in-season form data exists (>0.1)
     if form > 0.1:
         ep = _safe_float(p.get("ep_next"), 0.0)
         ev_b = max(0.0, (form * 0.6) + (ep * 0.4))
