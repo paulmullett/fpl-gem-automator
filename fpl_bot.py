@@ -325,6 +325,16 @@ def get_fpl_data():
                 team_gw_fdr[team_h][t] = f.get("team_h_difficulty", 3)
                 team_gw_fixtures[team_h][t] += 1.0
 
+    # LOAD MACHINE LEARNING PROJECTIONS FROM ML PIPELINE
+    ml_projections = {}
+    if os.path.exists("ml_projections.json"):
+        try:
+            with open("ml_projections.json", "r") as f:
+                ml_projections = json.load(f)
+            print("ML ENGINE: Successfully loaded ml_projections.json into decision pipeline.")
+        except Exception as e:
+            print(f"WARNING: Could not read ml_projections.json: {e}")
+
     ev_matrix = {}
     valid_ids = list(players.keys())
     for pid in valid_ids:
@@ -333,8 +343,19 @@ def get_fpl_data():
         if p.get("status") not in ["a", "d", ""]: continue
             
         t_id = p["team_id"]
-        ev_matrix[pid][0] = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
-        base_ev = get_base_ev(p, xmins_overrides, weights, market_data)
+        pid_str = str(pid)
+
+        # Calculate baseline heuristic & market EV
+        heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
+
+        # Inject XGBoost ML EV if available (70% ML / 30% Market & Heuristic blend)
+        if pid_str in ml_projections and ml_projections[pid_str].get("ml_ev_1gw", 0) > 0:
+            ml_ev = float(ml_projections[pid_str]["ml_ev_1gw"])
+            ev_matrix[pid][0] = round((0.70 * ml_ev) + (0.30 * heuristic_ev), 2)
+        else:
+            ev_matrix[pid][0] = heuristic_ev
+
+        base_ev = ev_matrix[pid][0]
         
         pos_id = p.get("pos_id", 3)
         sigma = base_ev * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
@@ -500,83 +521,4 @@ def get_fpl_data():
     locked_squad_str += f"• Stochastic 10th Percentile Floor:    {starter_floor:>6.1f} pts\n"
     locked_squad_str += f"• Stochastic 90th Percentile Ceiling:  {starter_ceiling:>6.1f} pts\n"
     locked_squad_str += "================================================================================\n"
-    locked_squad_str += "```\n"
-
-    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
-
-def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
-    gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
-
-    if WORKFLOW_INPUT == "post_gameweek_review":
-        action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
-        phase_instructions = (
-            "- FOCUS: Backward-looking performance evaluation, market equity, and medium-term planning.\n"
-            "- STRICT PHASE ISOLATION: Do NOT generate a pre-match pitch mismatch diagram or starting XI tactical justifications.\n"
-            "- Detail the MULTI-PERIOD TRANSFER TREE (MPO) roadmap for GW+1 through GW+7.\n"
-            "- GW1 ZERO-STATE RULE: If target_gw is 1, acknowledge actual recalibration data is pending."
-        )
-    elif WORKFLOW_INPUT == "pre_gameweek_deadline":
-        action_type = "Pre-Gameweek Final Deadline Lock & Late ITK Leak Audit"
-        phase_instructions = (
-            "- FOCUS: Forward-looking immediate execution for the upcoming deadline.\n"
-            "- Confirm any Human Oracle xMins overrides applied and lock Starting XI, Captain (C), Vice-Captain (VC)."
-        )
-    else:
-        action_type = "Full Weekly Execution & Analytical Breakdown"
-        phase_instructions = "- Balanced breakdown covering transfer economics, market volatility, and upcoming fixture geometry."
-
-    focus_instructions = (
-        f"1. 11-Man Verification Lock: Output exact mathematically locked Starting XI and Bench.\n"
-        f"2. Phase-Specific Focus ({action_type}):\n{phase_instructions}\n"
-        f"3. Analytical Justification: Use EXACT 'TRUE 1-GW EV' numbers provided.\n"
-        f"4. MANDATORY SIGN-OFF: Conclude response with boxed 'FINAL LOCKED-IN SQUAD SUMMARY' block exactly as provided."
-    )
-
-    return f"""
-    Run {action_type} for Gameweek {target_gw}.
-    ### CURRENT SQUAD STATE & ECONOMICS: Bank: £{bank}m | Saved Transfers: {free_transfers}
-    ### NEW ARRIVALS & FOREIGN TRANSFERS:\n{new_arrivals_str}
-    ### ACTIVE 2026/27 MARKET WATCHLIST:\n{market_str}\n{live_news}
-    ### DATA INSTRUCTIONS:\n{focus_instructions}{gw1_override}
-
-    ### MATHEMATICALLY LOCKED SQUAD PAYLOAD (INSERT VERBATIM AT END OF RESPONSE):
-    {locked_squad_str}
-    """
-
-def send_to_discord(webhook_url, text):
-    chunks, current_chunk = [], ""
-    for line in text.split("\n"):
-        while len(line) > 1800:
-            if len(current_chunk) > 0: chunks.append(current_chunk); current_chunk = ""
-            chunks.append(line[:1800]); line = line[1800:]
-        if len(current_chunk) + len(line) + 1 > 1800:
-            chunks.append(current_chunk); current_chunk = line + "\n"
-        else: current_chunk += line + "\n"
-    if current_chunk.strip(): chunks.append(current_chunk)
-    for chunk in chunks: requests.post(webhook_url, json={"content": chunk})
-
-def main():
-    target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str = get_fpl_data()
-    print("--- FETCHING LIVE WEB SEARCH DATA ---")
-    live_news = get_live_fpl_news()
-    prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news)
-    
-    print(f"--- QUERYING GEMINI API (Target GW: {target_gw} | Chip: {ACTIVE_CHIP}) ---")
-    try:
-        response = client.models.generate_content(
-            model='gemini-3.6-flash', contents=prompt,
-            config=types.GenerateContentConfig(system_instruction=SYSTEM_INSTRUCTION, temperature=0.2)
-        )
-    except Exception as e:
-        print(f"CRITICAL ERROR generating content with Gemini: {str(e)}")
-        sys.exit(1)
-        
-    content = response.text if response and response.text else ""
-    if not content: sys.exit(1)
-
-    print(f"--- GEMINI RESPONSE RECEIVED ({len(content)} chars) ---")
-    send_to_discord(DISCORD_WEBHOOK_URL, content)
-    print("--- DISCORD DELIVERY COMPLETE ---")
-
-if __name__ == "__main__":
-    main()
+    locked_squad_str += "

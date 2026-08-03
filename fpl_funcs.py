@@ -3,7 +3,28 @@ fpl_funcs.py — Core Mathematical & Utility Functions Engine
 """
 
 import math
+import json
+import os
+import logging
 from typing import Dict, Any, Optional
+
+logger = logging.getLogger(__name__)
+
+def load_ml_projections(filepath="ml_projections.json") -> Dict[str, Any]:
+    """Loads the automated ML pipeline projections."""
+    if not os.path.exists(filepath):
+        logger.warning(f"ML Projections file '{filepath}' not found. Falling back to heuristic engine.")
+        return {}
+
+    try:
+        with open(filepath, 'r') as f:
+            return json.load(f)
+    except Exception as e:
+        logger.error(f"Error reading ML projections: {e}")
+        return {}
+
+# Global memory cache for ML projections payload
+ML_PROJECTIONS = load_ml_projections()
 
 def _safe_float(v: Any, default: float = 0.0) -> float:
     try:
@@ -21,20 +42,25 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     cost = _safe_float(p.get("cost"), 4.0)
     pos_id = p.get("pos_id", 3)
     
-    base_cost = 4.0 if pos_id in [1, 2] else 4.5
-    own_boost = min(1.5, (own / 10.0))
-    effective_cost = cost + own_boost
-    
-    x = 2.5 * (effective_cost - (base_cost + 0.5))
-    raw_xmins = 90.0 / (1.0 + math.exp(-x))
+    # Priority check for established starters with low market ownership (e.g., new transfers)
+    ep_next = _safe_float(p.get("ep_next"), 0.0)
+    if own < 2.0 and ep_next >= 2.0:
+        base_xmins = 75.0
+    else:
+        base_cost = 4.0 if pos_id in [1, 2] else 4.5
+        own_boost = min(1.5, (own / 10.0))
+        effective_cost = cost + own_boost
+        
+        x = 2.5 * (effective_cost - (base_cost + 0.5))
+        base_xmins = 90.0 / (1.0 + math.exp(-x))
     
     if chance_raw is not None:
         chance_str = str(chance_raw)
-        if chance_str == "25": raw_xmins *= 0.25
-        elif chance_str == "50": raw_xmins *= 0.50
-        elif chance_str == "75": raw_xmins *= 0.75
+        if chance_str == "25": base_xmins *= 0.25
+        elif chance_str == "50": base_xmins *= 0.50
+        elif chance_str == "75": base_xmins *= 0.75
         
-    return min(90.0, max(0.0, raw_xmins))
+    return min(90.0, max(0.0, base_xmins))
 
 LEAGUE_BASE_STRENGTHS = {
     "Champions_League": {1: 0.98, 2: 0.96, 3: 0.96, 4: 0.96},
@@ -151,6 +177,13 @@ def get_live_price_deltas(players_dict: dict) -> dict:
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                 weights: Optional[Dict[str, float]] = None,
                 market_data: Optional[Dict[str, Any]] = None) -> float:
+    
+    # --- ML PIPELINE OVERRIDE ---
+    pid_str = str(p.get("id"))
+    if pid_str in ML_PROJECTIONS and ML_PROJECTIONS[pid_str].get("ml_ev_1gw", 0.0) > 0.0:
+        return float(ML_PROJECTIONS[pid_str]["ml_ev_1gw"])
+    # ----------------------------
+
     if isinstance(xmins_overrides, dict) and "xgi_weight" in xmins_overrides and weights is None:
         weights = xmins_overrides
         xmins_overrides = {}
@@ -219,7 +252,6 @@ def get_ensemble_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float
     if xmins_overrides is None: xmins_overrides = {}
     ev_a = get_base_ev(p, xmins_overrides, weights, market_data)
     
-    # 2. STOCHASTIC PRE-SOLVE VARIANCE GATING
     pos_id = p.get("pos_id", 3)
     sigma = ev_a * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
     if risk_posture == "SHIELD":
@@ -248,6 +280,13 @@ def get_macro_ev(p: Dict[str, Any], team_avg_fdr: Dict[int, float],
                  market_data: Optional[Dict[str, Any]] = None,
                  horizons: int = 8,
                  risk_posture: str = "NEUTRAL") -> float:
+    
+    # --- ML PIPELINE OVERRIDE ---
+    pid_str = str(p.get("id"))
+    if pid_str in ML_PROJECTIONS and ML_PROJECTIONS[pid_str].get("ml_ev_8gw", 0.0) > 0.0:
+        return float(ML_PROJECTIONS[pid_str]["ml_ev_8gw"])
+    # ----------------------------
+
     if weights is None: weights = {}
     if xmins_overrides is None: xmins_overrides = {}
 
