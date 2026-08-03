@@ -20,23 +20,29 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     own = _safe_float(p.get("own"), 0.0)
     cost = _safe_float(p.get("cost"), 4.0)
     pos_id = p.get("pos_id", 3)
-    ep_next = _safe_float(p.get("ep_next"), 0.0)
+    team = p.get("team", "UNK")
+    
+    # PREMIUM CLUB TAX: Mathematically differentiates an academy kid at Arsenal from a starter at Fulham
+    PREMIUM_TEAMS = {"ARS", "MCI", "LIV", "CHE", "TOT", "MUN"}
+    
+    if pos_id in [1, 2]: # GK/DEF
+        base_cost = 4.5 if team in PREMIUM_TEAMS else 4.0
+    else: # MID/FWD
+        base_cost = 5.5 if team in PREMIUM_TEAMS else 4.5
 
-    # STRICT FRINGE INTERCEPT: Traps overpriced academy players (e.g., Dowman) from exploiting the logistic curve
-    if cost < 6.0 and own < 1.5 and ep_next < 1.5:
-        base_xmins = 15.0 + (own * 10.0)
-    # Priority check for established starters or premium assets
-    elif own < 2.0 and ep_next >= 2.0:
-        base_xmins = 75.0
-    elif cost >= 6.0:
-        base_xmins = 88.0
-    else:
-        base_cost = 4.0 if pos_id in [1, 2] else 4.5
-        own_boost = min(1.5, (own / 10.0))
-        effective_cost = cost + own_boost
+    own_boost = min(1.5, (own / 10.0))
+    effective_cost = cost + own_boost
+    
+    x = 2.5 * (effective_cost - (base_cost + 0.5))
+    base_xmins = 90.0 / (1.0 + math.exp(-x))
+    
+    # MARKET TRUTH OVERRIDE: High ownership instantly validates starting status
+    if own >= 10.0:
+        base_xmins = max(base_xmins, 80.0)
         
-        x = 2.5 * (effective_cost - (base_cost + 0.5))
-        base_xmins = 90.0 / (1.0 + math.exp(-x))
+    # PREMIUM PRICE OVERRIDE: Top-tier transfers are guaranteed to play regardless of initial low ownership
+    if cost >= 7.0:
+        base_xmins = max(base_xmins, 80.0)
 
     if chance_raw is not None:
         chance_str = str(chance_raw)
