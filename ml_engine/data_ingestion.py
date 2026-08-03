@@ -1,6 +1,33 @@
+"""
+ml_engine/data_ingestion.py — Core Data Ingestion Module (Stabilized)
+"""
+import pandas as pd
+import soccerdata as sd
+import requests
+import logging
+
+logger = logging.getLogger(__name__)
+
+def fetch_fpl_data() -> pd.DataFrame:
+    logger.info("Fetching live player data from official FPL API...")
+    try:
+        response = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/")
+        if response.status_code == 200:
+            data = response.json()
+            df = pd.DataFrame(data.get('elements', []))
+            logger.info(f"Successfully retrieved {len(df)} active players from FPL API.")
+            return df
+        else:
+            logger.error("Failed to fetch FPL data.")
+            return pd.DataFrame()
+    except Exception as e:
+        logger.error(f"Error fetching FPL data: {e}")
+        return pd.DataFrame()
+
 def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
     if leagues is None:
-        leagues = ["Big 5 European Leagues Combined", "ENG-Championship"]
+        # Restricted strictly to soccerdata-supported FBref identifiers
+        leagues = ["Big 5 European Leagues Combined"]
         
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
@@ -34,7 +61,7 @@ def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
             
-        # AGGREGATION: If a player moved mid-season or across monitored leagues, combine their stats
+        # AGGREGATION: Combine stats for multi-club players
         grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
 
         logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
