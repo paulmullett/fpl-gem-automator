@@ -78,10 +78,10 @@
     },
     "12": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 3.63,
-        "ml_ev_8gw": 27.58,
-        "ml_variance_floor": 2.18,
-        "ml_variance_ceiling": 5.44
+        "ml_ev_1gw": 4.16,
+        "ml_ev_8gw": 31.6,
+        "ml_variance_floor": 2.49,
+        "ml_variance_ceiling": 6.24
     },
     "13": {
         "ml_xmins": 90.0,
@@ -1093,10 +1093,10 @@
     },
     "154": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 3.34,
-        "ml_ev_8gw": 25.38,
-        "ml_variance_floor": 2.0,
-        "ml_variance_ceiling": 5.01
+        "ml_ev_1gw": 3.87,
+        "ml_ev_8gw": 29.39,
+        "ml_variance_floor": 2.32,
+        "ml_variance_ceiling": 5.8
     },
     "155": {
         "ml_xmins": 88.1,
@@ -2696,10 +2696,10 @@
     },
     "379": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 2.56,
-        "ml_ev_8gw": 19.48,
-        "ml_variance_floor": 1.54,
-        "ml_variance_ceiling": 3.85
+        "ml_ev_1gw": 2.87,
+        "ml_ev_8gw": 21.82,
+        "ml_variance_floor": 1.72,
+        "ml_variance_ceiling": 4.31
     },
     "380": {
         "ml_xmins": 0.0,
@@ -2927,10 +2927,10 @@
     },
     "411": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 3.72,
-        "ml_ev_8gw": 28.29,
-        "ml_variance_floor": 2.23,
-        "ml_variance_ceiling": 5.58
+        "ml_ev_1gw": 4.48,
+        "ml_ev_8gw": 34.04,
+        "ml_variance_floor": 2.69,
+        "ml_variance_ceiling": 6.72
     },
     "481": {
         "ml_xmins": 88.7,
@@ -3060,10 +3060,10 @@
     },
     "426": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 3.63,
-        "ml_ev_8gw": 27.58,
-        "ml_variance_floor": 2.18,
-        "ml_variance_ceiling": 5.44
+        "ml_ev_1gw": 4.23,
+        "ml_ev_8gw": 32.13,
+        "ml_variance_floor": 2.54,
+        "ml_variance_ceiling": 6.34
     },
     "427": {
         "ml_xmins": 90.0,
@@ -3887,7 +3887,7 @@
     "542": {
         "ml_xmins": 89.7,
         "ml_ev_1gw": 2.89,
-        "ml_ev_8gw": 21.96,
+        "ml_ev_8gw": 21.95,
         "ml_variance_floor": 1.73,
         "ml_variance_ceiling": 4.33
     },
