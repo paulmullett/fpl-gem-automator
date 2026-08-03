@@ -1,29 +1,3 @@
-"""
-ml_engine/data_ingestion.py — Core Data Ingestion Module
-"""
-import pandas as pd
-import soccerdata as sd
-import requests
-import logging
-
-logger = logging.getLogger(__name__)
-
-def fetch_fpl_data() -> pd.DataFrame:
-    logger.info("Fetching live player data from official FPL API...")
-    try:
-        response = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/")
-        if response.status_code == 200:
-            data = response.json()
-            df = pd.DataFrame(data.get('elements', []))
-            logger.info(f"Successfully retrieved {len(df)} active players from FPL API.")
-            return df
-        else:
-            logger.error("Failed to fetch FPL data.")
-            return pd.DataFrame()
-    except Exception as e:
-        logger.error(f"Error fetching FPL data: {e}")
-        return pd.DataFrame()
-
 def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
     if leagues is None:
         leagues = ["Big 5 European Leagues Combined", "ENG-Championship"]
