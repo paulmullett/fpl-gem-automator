@@ -106,6 +106,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # Max 13 players costing >= £5.0m (forces at least 2 floor-priced £4.0m/£4.5m bench fodder)
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["cost"] >= 5.0) <= 13
 
+        # --- POSITIONAL BUDGET GUARDRAILS ---
+        
+        # 1. Force the £4.0m GK Fodder Meta: Max £10.0m total on the two Goalkeepers
+        # Eliminates £6.0m + £4.5m pairings, forcing funds outfield
+        prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) <= 10.0
+        
+        # 2. Kill the 5-at-the-back Hoarding: Max 3 premium defenders (£5.5m+)
+        prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2 and players[pid]["cost"] >= 5.5) <= 3
+
         # Squad continuity and transfer balance equations
         for pid in valid_pids:
             if t == 0:

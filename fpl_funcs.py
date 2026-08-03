@@ -261,7 +261,13 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
 
-    final_ev = app_points + attacking_points + cs_points + extra_defensive_points
+    # --- ADDED: BONUS POINTS SYSTEM (BPS) MONOPOLY ---
+    # Premium attackers capture the maximum 3 bonus points almost every time they score
+    expected_bps = 0.0
+    if pos_id in [3, 4] and cost >= 9.0:
+        expected_bps = (shrunken_xgi * mins_factor) * 2.2
+
+    final_ev = app_points + attacking_points + cs_points + extra_defensive_points + expected_bps
     return max(0.0, final_ev)
 
 def get_variance_penalty(xmins: float) -> float:
