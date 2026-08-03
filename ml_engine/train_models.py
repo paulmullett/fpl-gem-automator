@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Transfer-Aware Global Fallback)
+ml_engine/train_models.py — XGBoost Predictive Engine (Set-Intersection Bipartite Matching)
 """
 
 import pandas as pd
@@ -11,31 +11,29 @@ import difflib
 
 logger = logging.getLogger(__name__)
 
+# Core mapping translation for FPL short codes to FBref team strings
 FPL_TO_FBREF_TEAM = {
-    "ARS": "Arsenal",
-    "AVL": "Aston Villa",
-    "BOU": "Bournemouth",
-    "BRE": "Brentford",
-    "BHA": "Brighton",
-    "CHE": "Chelsea",
-    "COV": "Coventry",
-    "CRY": "Crystal Palace",
-    "EVE": "Everton",
-    "FUL": "Fulham",
-    "HUL": "Hull",
-    "IPI": "Ipswich",
-    "LEE": "Leeds",
-    "LEI": "Leicester",
-    "LIV": "Liverpool",
-    "MCI": "Manchester City",
-    "MUN": "Manchester Utd",
-    "NEW": "Newcastle",
-    "NFO": "Nottingham", 
-    "SOU": "Southampton",
-    "SUN": "Sunderland",
-    "TOT": "Tottenham",
-    "WHU": "West Ham",
-    "WOL": "Wolves"
+    "ARS": "Arsenal", "AVL": "Aston Villa", "BOU": "Bournemouth", "BRE": "Brentford",
+    "BHA": "Brighton", "CHE": "Chelsea", "COV": "Coventry", "CRY": "Crystal Palace",
+    "EVE": "Everton", "FUL": "Fulham", "HUL": "Hull", "IPI": "Ipswich",
+    "LEE": "Leeds", "LEI": "Leicester", "LIV": "Liverpool", "MCI": "Manchester City",
+    "MUN": "Manchester Utd", "NEW": "Newcastle", "NFO": "Nottingham", "SOU": "Southampton",
+    "SUN": "Sunderland", "TOT": "Tottenham", "WHU": "West Ham", "WOL": "Wolves"
+}
+
+# Surgical overrides for elite outliers with compound legal names or missing team tags
+NAME_OVERRIDES = {
+    "bruno guimaraes rodriguez moura": "bruno guimaraes",
+    "bruno g.": "bruno guimaraes",
+    "stefan bajcetic maquieira": "stefan bajcetic",
+    "bajcetic": "stefan bajcetic",
+    "nico gonzalez iglesias": "nico gonzalez",
+    "n.gonzalez": "nico gonzalez",
+    "dejan kulusevski": "dejan kulusevski",
+    "kulusevski": "dejan kulusevski",
+    "kalvin phillips": "kalvin phillips",
+    "illan meslier": "illan meslier",
+    "christos tzolis": "christos tzolis"
 }
 
 def strip_accents(text):
@@ -47,25 +45,26 @@ def strip_accents(text):
         return str(text).lower().strip()
 
 def match_logic(full_name, web_name, second_name, first_name, name_pool):
-    """Reusable logic for both Team-Bounded and Global searches."""
-    # 1. Exact Exact
+    """Reusable logic utilizing Set Intersections for complex compound names."""
     if full_name in name_pool: return full_name
     if web_name in name_pool: return web_name
     
-    # 2. Token Matching (e.g., "Senesi" inside "Marcos Senesi")
+    # Advanced Set Intersection (Catches "Guimaraes" inside "Guimaraes Rodriguez Moura")
+    sn_tokens = set(second_name.split()) if second_name else set()
+    wn_tokens = set(web_name.split('-')) if web_name else set()
+    
     for fb_name in name_pool:
         fb_tokens = set(fb_name.split())
-        if second_name and second_name in fb_tokens:
-            if not first_name or (first_name[0] == fb_name[0]):
+        
+        # If they share a meaningful part of the last name
+        if sn_tokens.intersection(fb_tokens):
+            if not first_name or first_name[0] == fb_name[0] or wn_tokens.intersection(fb_tokens):
                 return fb_name
-        if web_name and web_name in fb_tokens:
+                
+        if wn_tokens.intersection(fb_tokens):
             return fb_name
-        if '-' in second_name:
-            for part in second_name.split('-'):
-                if len(part) > 3 and part in fb_tokens:
-                    return fb_name
-                    
-    # 3. Forgiving Fuzzy Match
+            
+    # Forgiving Fuzzy Match
     fuzzy = difflib.get_close_matches(full_name, name_pool, n=1, cutoff=0.70)
     if fuzzy: return fuzzy[0]
     
@@ -80,25 +79,32 @@ def find_best_match(fpl_row, fbref_df):
     second_name = strip_accents(fpl_row.get('second_name', ''))
     full_name = f"{first_name} {second_name}".strip()
     
+    global_pool = fbref_df['clean_fbref_name'].tolist()
+    
+    # 0. Check Surgical Overrides against the Global Pool
+    if full_name in NAME_OVERRIDES and NAME_OVERRIDES[full_name] in global_pool:
+        return NAME_OVERRIDES[full_name]
+    if web_name in NAME_OVERRIDES and NAME_OVERRIDES[web_name] in global_pool:
+        return NAME_OVERRIDES[web_name]
+    
     team_code = fpl_row.get('team_code', '')
     target_team = strip_accents(FPL_TO_FBREF_TEAM.get(team_code, ''))
     
-    # --- PHASE 1: TEAM-BOUNDED SEARCH (Catches 95% of stable players) ---
+    # 1. TEAM-BOUNDED SEARCH (Isolates to ~25 players)
     if target_team:
         team_pool = fbref_df[fbref_df['clean_team'].str.contains(target_team, na=False, regex=False)]['clean_fbref_name'].tolist()
         if team_pool:
             match = match_logic(full_name, web_name, second_name, first_name, team_pool)
             if match: return match
 
-    # --- PHASE 2: GLOBAL FALLBACK SEARCH (Catches Summer Transfers) ---
-    global_pool = fbref_df['clean_fbref_name'].tolist()
+    # 2. GLOBAL FALLBACK SEARCH (Catches Summer Transfers)
     match = match_logic(full_name, web_name, second_name, first_name, global_pool)
     if match: return match
     
     return None
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets using Team-Bounded & Transfer-Aware Global Logic...")
+    logger.info("Aligning FPL and FBref datasets using Set-Intersection Team Bounding...")
     
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
@@ -109,13 +115,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
         
-        df = pd.merge(
-            fpl_df, 
-            fbref_df, 
-            left_on='matched_fbref_name', 
-            right_on='clean_fbref_name', 
-            how='left'
-        )
+        df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left')
         
         match_rate = df['matched_fbref_name'].notna().mean() * 100
         logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
