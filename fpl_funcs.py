@@ -185,8 +185,8 @@ def get_live_price_deltas(players_dict: dict) -> dict:
     return deltas
 
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
-                weights: Optional[Dict[str, float]] = None,
-                market_data: Optional[Dict[str, Any]] = None) -> float:
+                 weights: Optional[Dict[str, float]] = None,
+                 market_data: Optional[Dict[str, Any]] = None) -> float:
     if isinstance(xmins_overrides, dict) and "xgi_weight" in xmins_overrides and weights is None:
         weights = xmins_overrides
         xmins_overrides = {}
@@ -200,7 +200,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
 
     raw_xgi = _safe_float(p.get("xgi_90"), 0.0)
     
-    # ASYMPTOTIC SOFT-CAP: Dampens extreme small-sample anomalies without limiting true elites
+    # Asymptotic soft-cap for extreme small-sample anomalies
     if raw_xgi > 1.0:
         xgi = 1.0 + ((raw_xgi - 1.0) * 0.4)
     else:
@@ -212,11 +212,12 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     ep_next = _safe_float(p.get("ep_next"), 0.0)
     pos_id = p.get("pos_id", 3)
 
+    # Pre-season / Zero-Data Fallback
     if xgi <= 0.01:
-        if pos_id == 4:    xgi = 0.40 + max(0.0, cost - 6.0) * 0.04
-        elif pos_id == 3:  xgi = 0.22 + max(0.0, cost - 5.5) * 0.03
-        elif pos_id == 2:  xgi = 0.08 + max(0.0, cost - 4.5) * 0.02
-        else:              xgi = 0.01
+        if pos_id == 4: xgi = 0.40 + max(0.0, cost - 6.0) * 0.04
+        elif pos_id == 3: xgi = 0.22 + max(0.0, cost - 5.5) * 0.03
+        elif pos_id == 2: xgi = 0.08 + max(0.0, cost - 4.5) * 0.02
+        else: xgi = 0.01
 
     mins_factor = xmins / 90.0
 
@@ -227,11 +228,11 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     cost_threshold = 4.0 if pos_id in [1, 2] else 4.5
     cost_premium = max(0.0, cost - cost_threshold)
     
-    # MULTI-VARIATE CONFIDENCE: Blends Cost, Ownership, and FPL's native expectation
+    # Full Multi-Variate Confidence
     raw_confidence = (cost_premium / 4.0) + (own / 30.0) + (max(0, ep_next - 2.0) * 0.15)
     
+    # Foreign Transfer Protection Boost
     translation_mult = calculate_tier1_translation_factor(p)
-    # Protect elite foreign transfers with strong UEFA coefficients from washing out due to low initial ownership
     if translation_mult > 0.90 and own < 5.0 and pos_id in [3, 4]:
         confidence = min(1.0, max(raw_confidence, 0.60))
     else:
@@ -240,9 +241,11 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     adjusted_xgi = xgi * translation_mult
     shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
 
+    # Appearance Points
     prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
     app_points = (prob_60 * 2.0) + ((1.0 - prob_60) * 1.0)
 
+    # Clean Sheet Points
     team_xga = xgc * mins_factor
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
 
@@ -250,6 +253,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     elif pos_id == 3: cs_points = (cs_prob * 1.0) * prob_60
     else: cs_points = 0.0
 
+    # Defensive Extra Points
     extra_defensive_points = 0.0
     if pos_id == 1:
         estimated_saves = max(1.5, (xgc * 1.4))
@@ -257,15 +261,15 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     elif pos_id == 2:
         extra_defensive_points = 0.22 * mins_factor if cost >= 5.5 else 0.08
 
+    # Attacking Points with Market Premium Factor
     market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04)
     pos_mult = 4.2 if pos_id == 2 else (4.0 if pos_id == 3 else 3.6)
     attacking_points = (shrunken_xgi * mins_factor) * pos_mult * market_premium_factor
 
-    # --- ADDED: BONUS POINTS SYSTEM (BPS) MONOPOLY ---
-    # Premium attackers capture the maximum 3 bonus points almost every time they score
-    expected_bps = 0.0
-    if pos_id in [3, 4] and cost >= 9.0:
-        expected_bps = (shrunken_xgi * mins_factor) * 2.2
+    # Statistical BPS Physics Model (Derived from shrunken xGI)
+    bps_goal_weight = 1.35 if pos_id == 4 else (1.10 if pos_id == 3 else 0.80)
+    bps_assist_weight = 0.60
+    expected_bps = ((shrunken_xgi * 0.7 * bps_goal_weight) + (shrunken_xgi * 0.3 * bps_assist_weight)) * mins_factor
 
     final_ev = app_points + attacking_points + cs_points + extra_defensive_points + expected_bps
     return max(0.0, final_ev)

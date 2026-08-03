@@ -1,5 +1,5 @@
 """
-fpl_mpo_engine.py — Multi-Period Optimization (MPO) Engine with Native Bench Weighting
+fpl_mpo_engine.py — Mathematical Multi-Period Optimization (MILP) Engine
 """
 
 import pulp
@@ -40,20 +40,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     prob = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
 
     # Decision Variables:
-    # x[p, t] = 1 if player p is owned in 15-man squad in GW t
-    # s[p, t] = 1 if player p is in Starting XI in GW t
-    # c[p, t] = 1 if player p is Captain in GW t
+    # x[p, t] = 1 if player p is in 15-man squad
+    # s[p, t] = 1 if player p is in Starting XI
+    # c[p, t] = 1 if player p is Captain
     x = pulp.LpVariable.dicts("x", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     s = pulp.LpVariable.dicts("s", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     c = pulp.LpVariable.dicts("c", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     
-    # Transfer Variables
     trans_in = pulp.LpVariable.dicts("trans_in", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     trans_out = pulp.LpVariable.dicts("trans_out", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
 
     discount_factor = 0.85
     objective_terms = []
-    w_bench = 0.05  # Bench EV weighted at 5% to force budget into starting XI premiums
+    w_bench = 0.05  # Bench EV weighted at 5% auto-sub probability
 
     for t in range(horizons):
         t_weight = discount_factor ** t
@@ -63,13 +62,12 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             p = players[pid]
             base_ev = ev_matrix[pid][t]
             
-            # Risk posture adjustments
             if risk_posture == "SHIELD":
                 base_ev *= (1.0 - (p.get("own", 0.0) / 200.0 * 0.1))
             elif risk_posture == "CHASE":
                 base_ev *= (1.0 + (p.get("own", 0.0) / 200.0 * 0.1))
             
-            # OBJECTIVE FUNCTION: Starting XI EV + Captain EV + Bench EV (5% weight)
+            # Co-optimize Starting XI EV + Captain 2x Multiplier + Bench EV
             objective_terms.append(t_weight * base_ev * s[pid, t])
             objective_terms.append(t_weight * base_ev * cap_mult * c[pid, t])
             objective_terms.append(t_weight * base_ev * w_bench * (x[pid, t] - s[pid, t]))
@@ -81,42 +79,40 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
     prob += pulp.lpSum(objective_terms)
 
-    # Constraints per Gameweek
+    # Pure Game-Rule Constraints
     initial_owned = set(current_squad_ids) if current_squad_ids else set()
 
     for t in range(horizons):
-        # Squad and Lineup Size
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids) == 15
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids) == 11
         prob += pulp.lpSum(c[pid, t] for pid in valid_pids) == 1
 
-        # Linking constraints: s <= x and c <= s
         for pid in valid_pids:
             prob += s[pid, t] <= x[pid, t]
             prob += c[pid, t] <= s[pid, t]
 
-        # 15-Man Squad Position Constraints (2 GKP, 5 DEF, 5 MID, 3 FWD)
+        # 15-Man Squad Constraints (2 GKP, 5 DEF, 5 MID, 3 FWD)
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) == 2
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) == 5
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3
 
-        # Starting XI Position Constraints (1 GKP, 3-4 DEF, 3-5 MID, 1-3 FWD)
+        # Starting XI Constraints (1 GKP, 3-5 DEF, 3-5 MID, 1-3 FWD)
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3
-        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 4
+        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 5
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 3
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
-        # Max 3 players per real-world club
+        # Max 3 players per club rule
         team_ids = set(players[pid]["team_id"] for pid in valid_pids if players[pid].get("team_id"))
         for team_id in team_ids:
             prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
-        # Total Liquid Budget
+        # Total Financial Budget
         prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids) <= total_liquid_budget
 
-        # Squad continuity and transfer balance
+        # Squad continuity
         for pid in valid_pids:
             if t == 0:
                 is_init = 1 if pid in initial_owned else 0
@@ -124,11 +120,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             else:
                 prob += x[pid, t] == x[pid, t-1] + trans_in[pid, t] - trans_out[pid, t]
 
-        # Transfer limits per GW
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
 
-    # Solve optimization model
     prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     optimal_squad = []
