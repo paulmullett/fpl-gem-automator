@@ -1,5 +1,5 @@
 """
-ml_engine/data_ingestion.py — Core Data Ingestion Module (Guaranteed Name Resolution)
+ml_engine/data_ingestion.py — Core Data Ingestion Module (Restored Original Logic)
 """
 import pandas as pd
 import soccerdata as sd
@@ -32,47 +32,23 @@ def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
         stats_df = fbref.read_player_season_stats(stat_type="standard")
-        
-        # Flatten MultiIndex columns robustly
         stats_df = stats_df.reset_index()
-        flat_cols = []
-        for col in stats_df.columns:
-            if isinstance(col, tuple):
-                parts = [str(p).strip() for p in col if p and not str(p).lower().startswith('unnamed')]
-                flat_cols.append('_'.join(parts) if parts else str(col[-1]))
-            else:
-                flat_cols.append(str(col).strip())
-        stats_df.columns = flat_cols
         
         clean_df = pd.DataFrame()
-        col_lower = {str(c).lower(): c for c in stats_df.columns}
+        str_columns = [str(c).lower() for c in stats_df.columns]
         
-        # GUARANTEED PLAYER NAME RESOLUTION: Explicitly find 'player' column, ignoring team/squad/nation
-        name_col = None
-        for k, orig_col in col_lower.items():
-            if 'player' in k and 'team' not in k and 'squad' not in k and 'nation' not in k:
-                name_col = orig_col
-                break
-        if not name_col:
-            # Fallback search for any column containing 'name'
-            name_col = next((col_lower[k] for k in col_lower if 'name' in k), stats_df.columns[0])
-            
-        clean_df['name'] = stats_df[name_col]
-        
-        # Extract metrics safely
-        min_key = next((col_lower[k] for k in col_lower if ('min' in k or 'minute' in k) and '90' not in k), None)
-        clean_df['minutes_played'] = stats_df[min_key] if min_key else 0.0
-        
-        xg_key = next((col_lower[k] for k in col_lower if 'xg' in k and 'npxg' not in k and 'xag' not in k), None)
-        clean_df['fbref_xg'] = stats_df[xg_key] if xg_key else 0.0
+        for orig_col, str_col in zip(stats_df.columns, str_columns):
+            if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
+                clean_df['name'] = stats_df[orig_col]
+            elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
+                clean_df['minutes_played'] = stats_df[orig_col]
+            elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
+                clean_df['fbref_npxg'] = stats_df[orig_col]
+            elif 'xag' in str_col and '90' not in str_col and 'fbref_xag' not in clean_df:
+                clean_df['fbref_xag'] = stats_df[orig_col]
+            elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
+                clean_df['fbref_xg'] = stats_df[orig_col]
 
-        npxg_key = next((col_lower[k] for k in col_lower if 'npxg' in k), None)
-        clean_df['fbref_npxg'] = stats_df[npxg_key] if npxg_key else 0.0
-
-        xag_key = next((col_lower[k] for k in col_lower if 'xag' in k or ('xa' in k and 'xg' not in k)), None)
-        clean_df['fbref_xag'] = stats_df[xag_key] if xag_key else 0.0
-
-        # Type cleaning & Failsafes
         for col in ['name', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
             if col not in clean_df:
                 clean_df[col] = 0.0 if col != 'name' else "Unknown"
