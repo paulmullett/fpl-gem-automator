@@ -1,35 +1,7 @@
-"""
-ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine
-"""
-import logging
-import pandas as pd
-import requests
-import soccerdata as sd
-
-logger = logging.getLogger(__name__)
-
-def fetch_fpl_data() -> pd.DataFrame:
-    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
-    logger.info("Fetching live player data from official FPL API...")
-    try:
-        response = requests.get(url, headers={"User-Agent": "FPL-ML-Pipeline/1.0"}, timeout=10)
-        response.raise_for_status()
-        data = response.json()
+def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
+    if leagues is None:
+        leagues = ["Big 5 European Leagues Combined", "ENG-Championship"]
         
-        elements_df = pd.DataFrame(data['elements'])
-        teams_map = {t['id']: t['short_name'] for t in data['teams']}
-        types_map = {e['id']: e['singular_name_short'] for e in data['element_types']}
-        
-        elements_df['team_code'] = elements_df['team'].map(teams_map)
-        elements_df['position'] = elements_df['element_type'].map(types_map)
-        
-        logger.info(f"Successfully retrieved {len(elements_df)} active players from FPL API.")
-        return elements_df
-    except Exception as e:
-        logger.error(f"Failed to fetch FPL API data: {e}")
-        return pd.DataFrame()
-
-def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") -> pd.DataFrame:
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
@@ -62,7 +34,7 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
             
-        # AGGREGATION: If a player moved mid-season, combine their stats
+        # AGGREGATION: If a player moved mid-season or across monitored leagues, combine their stats
         grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
 
         logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
