@@ -29,7 +29,7 @@ def fetch_fpl_data() -> pd.DataFrame:
         logger.error(f"Failed to fetch FPL API data: {e}")
         return pd.DataFrame()
 
-def fetch_fbref_data(leagues="Big 5 European Leagues", seasons="2526") -> pd.DataFrame:
+def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") -> pd.DataFrame:
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
