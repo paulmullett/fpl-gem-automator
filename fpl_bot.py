@@ -313,17 +313,17 @@ def get_fpl_data():
     team_gw_fdr = {t_id: [6.0] * 8 for t_id in teams.keys()}
     team_gw_fixtures = {t_id: [0.0] * 8 for t_id in teams.keys()}
     
+    team_gw_opponents = {t_id: [[] for _ in range(8)] for t_id in teams.keys()}
+    
     for f in fixtures_data:
         event = f.get("event")
         if event and target_gw <= event < target_gw + 8:
             t = event - target_gw
             team_a, team_h = f.get("team_a"), f.get("team_h")
-            if team_a in team_gw_fdr:
-                team_gw_fdr[team_a][t] = f.get("team_a_difficulty", 3)
-                team_gw_fixtures[team_a][t] += 1.0
-            if team_h in team_gw_fdr:
-                team_gw_fdr[team_h][t] = f.get("team_h_difficulty", 3)
-                team_gw_fixtures[team_h][t] += 1.0
+            if team_a in team_gw_opponents:
+                team_gw_opponents[team_a][t].append({"opp": team_h, "is_home": False})
+            if team_h in team_gw_opponents:
+                team_gw_opponents[team_h][t].append({"opp": team_a, "is_home": True})
 
     ev_matrix = {}
     valid_ids = list(players.keys())
@@ -346,10 +346,40 @@ def get_fpl_data():
         elif RISK_POSTURE == "CHASE": base_ev += (sigma * 0.15)
             
         for t in range(1, 8):
-            fdr = team_gw_fdr[t_id][t]
-            fix_count = team_gw_fixtures[t_id][t]
-            fdr_multiplier = 1.0 + (3.0 - fdr) * 0.10 if fdr != 6.0 else 0.0
-            ev_matrix[pid][t] = max(0.0, base_ev * fdr_multiplier * fix_count)
+            gw_opponents = team_gw_opponents[t_id][t]
+            if not gw_opponents:
+                ev_matrix[pid][t] = 0.0
+                continue
+                
+            gw_ev_total = 0.0
+            for opp_data in gw_opponents:
+                opp_id = opp_data["opp"]
+                is_home = opp_data["is_home"]
+                opp_name = teams.get(opp_id, "")
+                
+                # MULTI-TIERED FAILSAFE: Fallback cascade if bookmaker odds are missing
+                opp_metrics = market_data.get(opp_name, {})
+                opp_xg = opp_metrics.get("xG", _safe_float(p.get("xgc_90"), 1.50))
+                opp_xgc = opp_metrics.get("xGC", _safe_float(p.get("xgi_90"), 1.50))
+                
+                # CONSERVATIVE VENUE FACTOR: Dampened to +/- 5% to prevent over-fitting
+                ha_factor = 1.05 if is_home else 0.95
+                
+                if pos_id in [1, 2]: # GK / DEF scale against Opponent xG
+                    raw_multiplier = (1.50 / max(0.50, opp_xg * ha_factor))
+                else: # MID / FWD scale against Opponent xGC
+                    raw_multiplier = ((opp_xgc * ha_factor) / 1.50)
+                
+                # BOUNDING: Clamps extreme outliers
+                raw_multiplier = max(0.65, min(1.35, raw_multiplier))
+                
+                # EXPONENTIAL HORIZON DECAY: Regresses dynamic odds back to 1.0 baseline over distance
+                horizon_decay = 0.95 ** t
+                final_multiplier = (raw_multiplier * horizon_decay) + (1.0 * (1.0 - horizon_decay))
+                
+                gw_ev_total += base_ev * final_multiplier
+                
+            ev_matrix[pid][t] = max(0.0, gw_ev_total)
 
     starter_candidates = sorted([p for p in valid_ids if players[p].get("cost", 0) >= 5.0], 
                                 key=lambda x: ev_matrix[x][0], reverse=True)[:11]
