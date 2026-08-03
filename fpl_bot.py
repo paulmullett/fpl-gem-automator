@@ -1,5 +1,5 @@
 """
-fpl_bot.py — Primary Execution Script & Discord Interface
+fpl_bot.py — Primary Execution Script & Discord Interface (Human-in-the-Loop Gatekeeper Architecture)
 """
 from dotenv import load_dotenv
 load_dotenv()
@@ -26,7 +26,6 @@ from fpl_funcs import (
     normalize_player,
     evaluate_chip_thresholds
 )
-
 from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
 
@@ -246,6 +245,7 @@ def get_fpl_data():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
     market_str = "Market data & live price deltas initialized."
 
+    # Sole method of forcing minute overrides: Explicit Human-in-the-Loop input
     if XMINS_INPUT:
         print(f"Processing Human Oracle Input: {XMINS_INPUT}")
         for override in XMINS_INPUT.split(","):
@@ -257,7 +257,7 @@ def get_fpl_data():
                     for pid, p in players.items():
                         if name_part in p["name"].lower():
                             xmins_overrides[str(pid)] = target_mins
-                            print(f"   -> ORACLE OVERRIDE: {p['name']} locked to {target_mins} mins.")
+                            print(f"   -> MANUAL ORACLE OVERRIDE: {p['name']} locked to {target_mins} mins.")
                 except ValueError:
                     print(f"   -> WARNING: Could not parse override '{override}'")
     
@@ -312,9 +312,6 @@ def get_fpl_data():
                 
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
-    team_gw_fdr = {t_id: [6.0] * 8 for t_id in teams.keys()}
-    team_gw_fixtures = {t_id: [0.0] * 8 for t_id in teams.keys()}
-    
     team_gw_opponents = {t_id: [[] for _ in range(8)] for t_id in teams.keys()}
     
     for f in fixtures_data:
@@ -336,7 +333,6 @@ def get_fpl_data():
             
         t_id = p["team_id"]
         
-        # RESTORED: Pure deterministic EV model execution.
         heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
         ev_matrix[pid][0] = heuristic_ev
 
@@ -359,23 +355,19 @@ def get_fpl_data():
                 is_home = opp_data["is_home"]
                 opp_name = teams.get(opp_id, "")
                 
-                # MULTI-TIERED FAILSAFE: Fallback cascade if bookmaker odds are missing
                 opp_metrics = market_data.get(opp_name, {})
                 opp_xg = opp_metrics.get("xG", _safe_float(p.get("xgc_90"), 1.50))
                 opp_xgc = opp_metrics.get("xGC", _safe_float(p.get("xgi_90"), 1.50))
                 
-                # CONSERVATIVE VENUE FACTOR: Dampened to +/- 5% to prevent over-fitting
                 ha_factor = 1.05 if is_home else 0.95
                 
-                if pos_id in [1, 2]: # GK / DEF scale against Opponent xG
+                if pos_id in [1, 2]: 
                     raw_multiplier = (1.50 / max(0.50, opp_xg * ha_factor))
-                else: # MID / FWD scale against Opponent xGC
+                else: 
                     raw_multiplier = ((opp_xgc * ha_factor) / 1.50)
                 
-                # BOUNDING: Clamps extreme outliers
                 raw_multiplier = max(0.65, min(1.35, raw_multiplier))
                 
-                # EXPONENTIAL HORIZON DECAY: Regresses dynamic odds back to 1.0 baseline over distance
                 horizon_decay = 0.95 ** t
                 final_multiplier = (raw_multiplier * horizon_decay) + (1.0 * (1.0 - horizon_decay))
                 
