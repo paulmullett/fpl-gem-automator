@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Team-Bounded Bipartite Matching)
+ml_engine/train_models.py — XGBoost Predictive Engine (Transfer-Aware Global Fallback)
 """
 
 import pandas as pd
@@ -11,7 +11,6 @@ import difflib
 
 logger = logging.getLogger(__name__)
 
-# Core mapping translation for FPL short codes to FBref team strings
 FPL_TO_FBREF_TEAM = {
     "ARS": "Arsenal",
     "AVL": "Aston Villa",
@@ -47,6 +46,34 @@ def strip_accents(text):
     except Exception:
         return str(text).lower().strip()
 
+def match_logic(full_name, web_name, second_name, first_name, name_pool):
+    """Reusable logic for both Team-Bounded and Global searches."""
+    # 1. Exact Exact
+    if full_name in name_pool: return full_name
+    if web_name in name_pool: return web_name
+    
+    # 2. Token Matching (e.g., "Senesi" inside "Marcos Senesi")
+    for fb_name in name_pool:
+        fb_tokens = set(fb_name.split())
+        if second_name and second_name in fb_tokens:
+            if not first_name or (first_name[0] == fb_name[0]):
+                return fb_name
+        if web_name and web_name in fb_tokens:
+            return fb_name
+        if '-' in second_name:
+            for part in second_name.split('-'):
+                if len(part) > 3 and part in fb_tokens:
+                    return fb_name
+                    
+    # 3. Forgiving Fuzzy Match
+    fuzzy = difflib.get_close_matches(full_name, name_pool, n=1, cutoff=0.70)
+    if fuzzy: return fuzzy[0]
+    
+    fuzzy_web = difflib.get_close_matches(web_name, name_pool, n=1, cutoff=0.70)
+    if fuzzy_web: return fuzzy_web[0]
+    
+    return None
+
 def find_best_match(fpl_row, fbref_df):
     web_name = strip_accents(fpl_row.get('web_name', ''))
     first_name = strip_accents(fpl_row.get('first_name', ''))
@@ -56,47 +83,22 @@ def find_best_match(fpl_row, fbref_df):
     team_code = fpl_row.get('team_code', '')
     target_team = strip_accents(FPL_TO_FBREF_TEAM.get(team_code, ''))
     
-    # 1. Isolate search space to the player's specific team (reduces pool from 2800 to ~25)
+    # --- PHASE 1: TEAM-BOUNDED SEARCH (Catches 95% of stable players) ---
     if target_team:
-        team_pool = fbref_df[fbref_df['clean_team'].str.contains(target_team, na=False, regex=False)]
-    else:
-        team_pool = pd.DataFrame()
-        
-    # 2. Execute Team-Bounded Match
-    if not team_pool.empty:
-        team_names = team_pool['clean_fbref_name'].tolist()
-        
-        # Exact match inside squad
-        if full_name in team_names: return full_name
-        if web_name in team_names: return web_name
-        
-        # Token check (e.g. "White" matching inside "Ben White" for Arsenal)
-        for fb_name in team_names:
-            if second_name and second_name in fb_name.split(): return fb_name
-            if web_name and web_name in fb_name.split(): return fb_name
-            if '-' in second_name:
-                for part in second_name.split('-'):
-                    if len(part) > 3 and part in fb_name.split(): return fb_name
-        
-        # Low-threshold fuzzy match since the pool is bounded to a single squad
-        fuzzy = difflib.get_close_matches(full_name, team_names, n=1, cutoff=0.55)
-        if fuzzy: return fuzzy[0]
-        
-        fuzzy_web = difflib.get_close_matches(web_name, team_names, n=1, cutoff=0.55)
-        if fuzzy_web: return fuzzy_web[0]
+        team_pool = fbref_df[fbref_df['clean_team'].str.contains(target_team, na=False, regex=False)]['clean_fbref_name'].tolist()
+        if team_pool:
+            match = match_logic(full_name, web_name, second_name, first_name, team_pool)
+            if match: return match
 
-    # 3. Global Fallback (for recent inter-league transfers without updated FBref teams)
-    global_names = fbref_df['clean_fbref_name'].tolist()
-    if full_name in global_names: return full_name
-    if web_name in global_names: return web_name
-    
-    fuzzy_global = difflib.get_close_matches(full_name, global_names, n=1, cutoff=0.85)
-    if fuzzy_global: return fuzzy_global[0]
+    # --- PHASE 2: GLOBAL FALLBACK SEARCH (Catches Summer Transfers) ---
+    global_pool = fbref_df['clean_fbref_name'].tolist()
+    match = match_logic(full_name, web_name, second_name, first_name, global_pool)
+    if match: return match
     
     return None
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets using Team-Bounded Bipartite Matching...")
+    logger.info("Aligning FPL and FBref datasets using Team-Bounded & Transfer-Aware Global Logic...")
     
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
@@ -141,7 +143,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     # ---------------------------------------------------------
     logger.info("Applying Positional Bayesian Shrinkage to per-90 metrics...")
     df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
-    
     df['pos_type'] = pd.to_numeric(df['element_type'], errors='coerce').fillna(3)
     
     prior_xg = {1: 0.00, 2: 0.04, 3: 0.15, 4: 0.38}
@@ -166,13 +167,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     
     logger.info(f"Training XGBoost Regressor on {len(X)} players...")
     
-    model = xgb.XGBRegressor(
-        n_estimators=100,
-        learning_rate=0.05,
-        max_depth=4,
-        random_state=42,
-        objective='reg:squarederror'
-    )
+    model = xgb.XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42, objective='reg:squarederror')
     model.fit(X, y)
     
     df['ml_predicted_ev'] = model.predict(X)
@@ -181,20 +176,16 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     projections = {}
     for _, row in df.iterrows():
         pid = str(row['id'])
-        
         status_mult = 1.0 if row['status'] == 'a' else (0.0 if row['status'] in ['d', 'i', 's', 'u'] else 0.5)
         ml_xmins = min(90.0, float(row.get('minutes_played', 0.0) / 38.0) * status_mult)
         if row['status'] == 'a' and float(row.get('ep_next', 0)) > 1.5:
             ml_xmins = max(75.0, ml_xmins)
         
         base_ev = float(row['ml_predicted_ev'])
-        
         projections[pid] = {
             "ml_xmins": round(ml_xmins, 1),
-            "ml_ev_1gw": round(base_ev, 2),
-            "ml_ev_8gw": round(base_ev * 8 * 0.95, 2),
-            "ml_variance_floor": round(base_ev * 0.6, 2),
-            "ml_variance_ceiling": round(base_ev * 1.5, 2)
+            "ml_ev_1gw": round(base_ev, 2), "ml_ev_8gw": round(base_ev * 8 * 0.95, 2),
+            "ml_variance_floor": round(base_ev * 0.6, 2), "ml_variance_ceiling": round(base_ev * 1.5, 2)
         }
         
     logger.info(f"Successfully generated ML projections for {len(projections)} players.")
