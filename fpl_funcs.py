@@ -21,8 +21,8 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     cost = _safe_float(p.get("cost"), 4.0)
     pos_id = p.get("pos_id", 3)
     team = p.get("team", "UNK")
+    fb_mins = _safe_float(p.get("fb_mins"), -1.0) # Historical FBref minutes
     
-    # PREMIUM CLUB TAX: Mathematically differentiates an academy kid at Arsenal from a starter at Fulham
     PREMIUM_TEAMS = {"ARS", "MCI", "LIV", "CHE", "TOT", "MUN"}
     
     if pos_id in [1, 2]: # GK/DEF
@@ -36,17 +36,23 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     x = 2.5 * (effective_cost - (base_cost + 0.5))
     base_xmins = 90.0 / (1.0 + math.exp(-x))
     
+    # --- HISTORICAL FBREF MINUTES INTEGRATION ---
+    if fb_mins >= 0:
+        # Full season is ~3420 mins
+        # < 1200 mins on a non-premium price (<£7.0m) indicates a backup or rotation player
+        if fb_mins < 1200 and cost < 7.0 and own < 5.0:
+            mins_factor = max(0.15, fb_mins / 1800.0)
+            base_xmins *= mins_factor
+        elif fb_mins >= 2000:
+            base_xmins = max(base_xmins, 75.0)
+
     # MARKET TRUTH OVERRIDE: High ownership instantly validates starting status
     if own >= 10.0:
         base_xmins = max(base_xmins, 80.0)
         
-    # PREMIUM PRICE OVERRIDE: Top-tier transfers are guaranteed to play regardless of initial low ownership
+    # PREMIUM PRICE OVERRIDE: Marquee signings (£7.0m+) get guaranteed starting expectation
     if cost >= 7.0:
         base_xmins = max(base_xmins, 80.0)
-
-    # PREMIUM BACKUP TAX: Penalize mid-premium assets at top clubs with near-zero ownership
-    if team in PREMIUM_TEAMS and 5.0 <= cost < 7.0 and own < 1.5:
-        base_xmins *= 0.15  # Slashes expected minutes for expensive bench players
 
     if chance_raw is not None:
         chance_str = str(chance_raw)

@@ -140,7 +140,8 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "source_league": row.get('source_league', 'Premier_League'),
             "age": int(row.get('age', 25) or 25),
             "has_stale_pl_history": bool(row.get('has_stale_pl_history', False)),
-            "recent_european_peak": bool(row.get('recent_european_peak', False))
+            "recent_european_peak": bool(row.get('recent_european_peak', False)),
+            "fb_mins": fb_mins # Pass historical minutes into fpl_funcs
         }
         
         xmins = estimate_xmins(player_obj)
