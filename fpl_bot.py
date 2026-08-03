@@ -324,17 +324,35 @@ def get_fpl_data():
             if team_h in team_gw_opponents:
                 team_gw_opponents[team_h][t].append({"opp": team_a, "is_home": True})
 
+    # --- ADDED: Load ML Projections ---
+    ml_proj_data = {}
+    if os.path.exists("ml_projections.json"):
+        try:
+            with open("ml_projections.json", "r") as f:
+                ml_proj_data = json.load(f)
+            print("SUCCESS: Loaded local FBref projections from ml_projections.json")
+        except Exception as e:
+            print(f"WARNING: Could not read ml_projections.json: {e}")
+    # ----------------------------------
+
     ev_matrix = {}
     valid_ids = list(players.keys())
     for pid in valid_ids:
         p = players[pid]
         ev_matrix[pid] = [0.0] * 8
         if p.get("status") not in ["a", "d", ""]: continue
-            
+        
         t_id = p["team_id"]
         
-        heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
+        # --- MODIFIED: Bridge Logic ---
+        pid_str = str(pid)
+        if pid_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid_str]:
+            heuristic_ev = float(ml_proj_data[pid_str]["ml_ev_1gw"])
+        else:
+            heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
+            
         ev_matrix[pid][0] = heuristic_ev
+        # ------------------------------
 
         base_ev = ev_matrix[pid][0]
         
