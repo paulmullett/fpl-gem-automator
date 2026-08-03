@@ -136,6 +136,13 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["transfers_in_event"] = int(raw_p.get("transfers_in_event") or 0)
     p["transfers_out_event"] = int(raw_p.get("transfers_out_event") or 0)
 
+    p["transfers_in_event"] = int(raw_p.get("transfers_in_event") or 0)
+    p["transfers_out_event"] = int(raw_p.get("transfers_out_event") or 0)
+    
+    # NEW: Dead-Ball Data Extraction
+    p["pen_order"] = raw_p.get("penalties_order")
+    p["set_piece_order"] = raw_p.get("corners_and_indirect_freekicks_order")
+
     return p
 
 def get_gameweek_state(bootstrap_data: Dict[str, Any]):
