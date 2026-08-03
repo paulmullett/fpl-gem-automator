@@ -74,6 +74,6 @@ jobs:
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add fpl_state.json ml_projections.json
+          git add -f fpl_state.json ml_projections.json
           git commit -m "Auto-update state and ML projections [skip ci]" || echo "No changes to commit"
           git push
