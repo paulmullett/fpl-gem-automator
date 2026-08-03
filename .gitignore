@@ -1,2 +1,5 @@
 __pycache__/
-.env
+*.pyc
+ml_projections.json
+projections.json
+fpl_state.json
