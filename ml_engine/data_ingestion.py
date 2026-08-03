@@ -1,78 +1,68 @@
 """
-ml_engine/data_ingestion.py — Core Data Ingestion Module (Bulletproof Index Extraction)
+ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine
 """
-import pandas as pd
-import soccerdata as sd
-import requests
 import logging
+import pandas as pd
+import requests
+import soccerdata as sd
 
 logger = logging.getLogger(__name__)
 
 def fetch_fpl_data() -> pd.DataFrame:
+    url = "https://fantasy.premierleague.com/api/bootstrap-static/"
     logger.info("Fetching live player data from official FPL API...")
     try:
-        response = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/")
-        if response.status_code == 200:
-            data = response.json()
-            df = pd.DataFrame(data.get('elements', []))
-            logger.info(f"Successfully retrieved {len(df)} active players from FPL API.")
-            return df
-        else:
-            logger.error("Failed to fetch FPL data.")
-            return pd.DataFrame()
+        response = requests.get(url, headers={"User-Agent": "FPL-ML-Pipeline/1.0"}, timeout=10)
+        response.raise_for_status()
+        data = response.json()
+        
+        elements_df = pd.DataFrame(data['elements'])
+        teams_map = {t['id']: t['short_name'] for t in data['teams']}
+        types_map = {e['id']: e['singular_name_short'] for e in data['element_types']}
+        
+        elements_df['team_code'] = elements_df['team'].map(teams_map)
+        elements_df['position'] = elements_df['element_type'].map(types_map)
+        
+        logger.info(f"Successfully retrieved {len(elements_df)} active players from FPL API.")
+        return elements_df
     except Exception as e:
-        logger.error(f"Error fetching FPL data: {e}")
+        logger.error(f"Failed to fetch FPL API data: {e}")
         return pd.DataFrame()
 
-def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
-    if leagues is None:
-        leagues = ["Big 5 European Leagues Combined"]
-        
+def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") -> pd.DataFrame:
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
         stats_df = fbref.read_player_season_stats(stat_type="standard")
-        
-        clean_df = pd.DataFrame()
-        
-        # 1. BULLETPROOF NAME EXTRACTION: Pull directly from the soccerdata MultiIndex level.
-        # This completely bypasses the pandas column flattening bugs that caused the 69% match rate.
-        if 'player' in stats_df.index.names:
-            clean_df['name'] = stats_df.index.get_level_values('player').astype(str).str.strip()
-        else:
-            # Absolute fallback if index is structured differently
-            temp_df = stats_df.reset_index()
-            name_col = next((c for c in temp_df.columns if 'player' in str(c).lower() and 'team' not in str(c).lower()), temp_df.columns[0])
-            clean_df['name'] = temp_df[name_col].astype(str).str.strip()
-            
-        # 2. Safely reset the index to move metrics into accessible columns
         stats_df = stats_df.reset_index()
         
-        # 3. Bulletproof metric extraction bypassing tuple naming issues
-        def get_metric(target_substring, exclude):
-            for col in stats_df.columns:
-                # Handle both tuple MultiIndex and flat string columns safely
-                c_end = str(col[-1]).lower().strip() if isinstance(col, tuple) else str(col).lower().strip()
-                if target_substring in c_end:
-                    if not any(ex in c_end for ex in exclude):
-                        s = stats_df[col]
-                        # If duplicate columns exist, take the first one to avoid DataFrame errors
-                        if isinstance(s, pd.DataFrame): 
-                            return s.iloc[:, 0]
-                        return s
-            return pd.Series(0.0, index=stats_df.index)
-
-        clean_df['minutes_played'] = pd.to_numeric(get_metric('min', ['90', 'per']), errors='coerce').fillna(0.0)
-        clean_df['fbref_xg'] = pd.to_numeric(get_metric('xg', ['npxg', 'xag', '90', 'per']), errors='coerce').fillna(0.0)
-        clean_df['fbref_npxg'] = pd.to_numeric(get_metric('npxg', ['90', 'per']), errors='coerce').fillna(0.0)
-        clean_df['fbref_xag'] = pd.to_numeric(get_metric('xag', ['90', 'per']), errors='coerce').fillna(0.0)
+        clean_df = pd.DataFrame()
+        str_columns = [str(c).lower() for c in stats_df.columns]
         
-        # Fallback for xA if xAG is not found
-        if clean_df['fbref_xag'].sum() == 0.0:
-            clean_df['fbref_xag'] = pd.to_numeric(get_metric('xa', ['90', 'per', 'xg']), errors='coerce').fillna(0.0)
+        for orig_col, str_col in zip(stats_df.columns, str_columns):
+            if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
+                clean_df['name'] = stats_df[orig_col]
+            elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
+                clean_df['minutes_played'] = stats_df[orig_col]
+            elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
+                clean_df['fbref_npxg'] = stats_df[orig_col]
+            elif 'xag' in str_col and '90' not in str_col and 'fbref_xag' not in clean_df:
+                clean_df['fbref_xag'] = stats_df[orig_col]
+            elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
+                clean_df['fbref_xg'] = stats_df[orig_col]
 
-        # 4. Final aggregation for multi-club players
+        # Failsafe for missing columns
+        for col in ['name', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
+            if col not in clean_df:
+                clean_df[col] = 0.0 if col != 'name' else "Unknown"
+        
+        # Clean and convert types
+        clean_df['name'] = clean_df['name'].astype(str)
         numeric_cols = ['minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']
+        for col in numeric_cols:
+            clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
+            
+        # AGGREGATION: If a player moved mid-season, combine their stats
         grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
 
         logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
