@@ -94,16 +94,13 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # Budget constraint
         prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids) <= total_liquid_budget
 
-        # --- ADDED: Squad Structure Constraints ---
-        # Prevent bench budget hoarding to force capital into premium assets (e.g., Haaland)
-        
-        # 1. Maximum of 11 players can cost £6.0m or more (forces at least 4 cheap enablers)
+        # Squad budget distribution constraints (prevents £23.5m+ bench hoarding)
+        # Max 11 players costing >= £6.0m (forces 4+ cheap budget enablers across bench/squad)
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["cost"] >= 6.0) <= 11
-        
-        # 2. Maximum of 13 players can cost £5.0m or more (forces at least 2 absolute minimum price fodder)
+
+        # Max 13 players costing >= £5.0m (forces at least 2 floor-priced £4.0m/£4.5m bench fodder)
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["cost"] >= 5.0) <= 13
-        # ------------------------------------------
-        
+
         # Squad continuity and transfer balance equations
         for pid in valid_pids:
             if t == 0:
