@@ -15,6 +15,7 @@ from google.genai import types
 from ddgs import DDGS
 
 from fpl_funcs import (
+    _safe_float,
     estimate_xmins,
     calculate_tier1_translation_factor,
     get_gameweek_state,
@@ -25,6 +26,7 @@ from fpl_funcs import (
     normalize_player,
     evaluate_chip_thresholds
 )
+
 from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
 
