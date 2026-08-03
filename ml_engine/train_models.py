@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Context-Aware with Overrides)
+ml_engine/train_models.py — XGBoost Predictive Engine (Bayesian Shrinkage)
 """
 
 import pandas as pd
@@ -11,13 +11,7 @@ import difflib
 
 logger = logging.getLogger(__name__)
 
-# THE SILVER BULLET: Manual overrides for stubborn mismatches.
-# If you spot an important player in the unmatched logs, add them here!
-# Format: "fpl web_name OR fpl full_name" (lowercase) : "fbref exact name" (lowercase)
-NAME_OVERRIDES = {
-    # Example: "son": "heung min son",
-    # Example: "bruno fernandes": "bruno fernandes",
-}
+NAME_OVERRIDES = {}
 
 def strip_accents(text):
     try:
@@ -34,23 +28,14 @@ def find_best_match(fpl_row, fbref_df):
     full_name = f"{first_name} {second_name}".strip()
     fpl_team = strip_accents(fpl_row.get('team_code', ''))
     
-    # 0. Check Manual Overrides First
-    if web_name in NAME_OVERRIDES:
-        return NAME_OVERRIDES[web_name]
-    if full_name in NAME_OVERRIDES:
-        return NAME_OVERRIDES[full_name]
+    if web_name in NAME_OVERRIDES: return NAME_OVERRIDES[web_name]
+    if full_name in NAME_OVERRIDES: return NAME_OVERRIDES[full_name]
     
     fbref_names = fbref_df['clean_fbref_name'].tolist()
     
-    # 1. Exact full name match
-    if full_name in fbref_names:
-        return full_name
+    if full_name in fbref_names: return full_name
+    if web_name in fbref_names: return web_name
         
-    # 2. Exact web name match
-    if web_name in fbref_names:
-        return web_name
-        
-    # 3. Compact substring matching
     web_compact = web_name.replace(" ", "").replace("-", "").replace(".", "")
     full_compact = full_name.replace(" ", "").replace("-", "").replace(".", "")
     second_compact = second_name.replace(" ", "").replace("-", "").replace(".", "")
@@ -58,27 +43,20 @@ def find_best_match(fpl_row, fbref_df):
     for idx, row in fbref_df.iterrows():
         fb_name = row['clean_fbref_name']
         fb_compact = fb_name.replace(" ", "").replace("-", "").replace(".", "")
-        if web_compact in fb_compact and len(web_compact) > 2:
-            return fb_name
-        if second_compact in fb_compact and len(second_compact) > 3:
-            return fb_name
+        if web_compact in fb_compact and len(web_compact) > 2: return fb_name
+        if second_compact in fb_compact and len(second_compact) > 3: return fb_name
 
-    # 4. Team-filtered fuzzy match
     if 'team' in fbref_df.columns:
         team_subset = fbref_df[fbref_df['clean_team'].str.contains(fpl_team, na=False)]
         if not team_subset.empty:
             team_names = team_subset['clean_fbref_name'].tolist()
             fuzzy_team = difflib.get_close_matches(full_name, team_names, n=1, cutoff=0.50)
-            if fuzzy_team:
-                return fuzzy_team[0]
+            if fuzzy_team: return fuzzy_team[0]
             fuzzy_web = difflib.get_close_matches(web_name, team_names, n=1, cutoff=0.50)
-            if fuzzy_web:
-                return fuzzy_web[0]
+            if fuzzy_web: return fuzzy_web[0]
 
-    # 5. Global forgiving fuzzy match
     fuzzy = difflib.get_close_matches(full_name, fbref_names, n=1, cutoff=0.50)
-    if fuzzy:
-        return fuzzy[0]
+    if fuzzy: return fuzzy[0]
         
     return None
 
@@ -105,17 +83,13 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         match_rate = df['matched_fbref_name'].notna().mean() * 100
         logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
         
-        # LOGGING THE FAILURES
         unmatched_fpl = df[df['matched_fbref_name'].isnull()]
         if not unmatched_fpl.empty:
             logger.warning(f"--- UNMATCHED FPL PLAYERS ({len(unmatched_fpl)}) ---")
             for _, row in unmatched_fpl.iterrows():
-                # Only warn loudly if they cost more than 4.5m (likely a senior player)
                 cost = float(row.get('now_cost', 0)) / 10
                 if cost > 4.5:
                     logger.warning(f"HIGH VALUE UNMATCHED: {row.get('web_name')} ({row.get('team_code')}) - £{cost}m [Full Name: {row.get('first_name')} {row.get('second_name')}]")
-                else:
-                    logger.debug(f"Unmatched (Budget/Youth): {row.get('web_name')} ({row.get('team_code')}) - £{cost}m")
             logger.warning("-----------------------------------------")
             
     else:
@@ -123,17 +97,38 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     
     essential_cols = ['fbref_xg', 'fbref_npxg', 'fbref_xag', 'minutes_played']
     for col in essential_cols:
-        if col not in df.columns:
-            df[col] = 0.0
+        if col not in df.columns: df[col] = 0.0
             
     df.fillna({col: 0.0 for col in essential_cols}, inplace=True)
     
-    logger.info("Engineering per-90 metrics for the XGBoost model...")
+    # ---------------------------------------------------------
+    # 2. FEATURE ENGINEERING: BAYESIAN SHRINKAGE
+    # ---------------------------------------------------------
+    logger.info("Applying Positional Bayesian Shrinkage to per-90 metrics...")
     df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
     
-    df['xg_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xg'] / df['minutes_played']) * 90, 0)
-    df['xag_per_90'] = np.where(df['minutes_played'] > 0, (df['fbref_xag'] / df['minutes_played']) * 90, 0)
+    # FPL element_types: 1=GK, 2=DEF, 3=MID, 4=FWD
+    df['pos_type'] = pd.to_numeric(df['element_type'], errors='coerce').fillna(3)
     
+    # Define Positional Priors (Expected League Averages per 90)
+    prior_xg = {1: 0.00, 2: 0.04, 3: 0.15, 4: 0.38}
+    prior_xag = {1: 0.00, 2: 0.06, 3: 0.12, 4: 0.15}
+    
+    # The "Gravity" of the prior (900 minutes = 10 full matches)
+    prior_90s = 900.0 / 90.0 
+    
+    df['prior_xg90'] = df['pos_type'].map(prior_xg)
+    df['prior_xag90'] = df['pos_type'].map(prior_xag)
+    
+    player_90s = df['minutes_played'] / 90.0
+    
+    # Bayesian Formula: ((Player Total Stat) + (Prior Stat/90 * Prior 90s)) / (Player 90s + Prior 90s)
+    df['xg_per_90'] = (df['fbref_xg'] + (df['prior_xg90'] * prior_90s)) / (player_90s + prior_90s)
+    df['xag_per_90'] = (df['fbref_xag'] + (df['prior_xag90'] * prior_90s)) / (player_90s + prior_90s)
+    
+    # ---------------------------------------------------------
+    # 3. DEFINE MODEL ARCHITECTURE
+    # ---------------------------------------------------------
     features = ['cost', 'xg_per_90', 'xag_per_90']
     X = df[features].copy()
     
