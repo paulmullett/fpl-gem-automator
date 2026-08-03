@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Context-Aware Matching)
+ml_engine/train_models.py — XGBoost Predictive Engine (Context-Aware with Overrides)
 """
 
 import pandas as pd
@@ -11,6 +11,14 @@ import difflib
 
 logger = logging.getLogger(__name__)
 
+# THE SILVER BULLET: Manual overrides for stubborn mismatches.
+# If you spot an important player in the unmatched logs, add them here!
+# Format: "fpl web_name OR fpl full_name" (lowercase) : "fbref exact name" (lowercase)
+NAME_OVERRIDES = {
+    # Example: "son": "heung min son",
+    # Example: "bruno fernandes": "bruno fernandes",
+}
+
 def strip_accents(text):
     try:
         text = str(text)
@@ -20,14 +28,17 @@ def strip_accents(text):
         return str(text).lower().strip()
 
 def find_best_match(fpl_row, fbref_df):
-    """
-    Multi-tier matching: Exact -> Compact Substring -> Team-Filtered Fuzzy -> Direct Fuzzy.
-    """
     web_name = strip_accents(fpl_row.get('web_name', ''))
     first_name = strip_accents(fpl_row.get('first_name', ''))
     second_name = strip_accents(fpl_row.get('second_name', ''))
     full_name = f"{first_name} {second_name}".strip()
     fpl_team = strip_accents(fpl_row.get('team_code', ''))
+    
+    # 0. Check Manual Overrides First
+    if web_name in NAME_OVERRIDES:
+        return NAME_OVERRIDES[web_name]
+    if full_name in NAME_OVERRIDES:
+        return NAME_OVERRIDES[full_name]
     
     fbref_names = fbref_df['clean_fbref_name'].tolist()
     
@@ -39,12 +50,11 @@ def find_best_match(fpl_row, fbref_df):
     if web_name in fbref_names:
         return web_name
         
-    # Prepare compact strings (strip spaces, dashes, dots)
+    # 3. Compact substring matching
     web_compact = web_name.replace(" ", "").replace("-", "").replace(".", "")
     full_compact = full_name.replace(" ", "").replace("-", "").replace(".", "")
     second_compact = second_name.replace(" ", "").replace("-", "").replace(".", "")
     
-    # 3. Compact substring matching
     for idx, row in fbref_df.iterrows():
         fb_name = row['clean_fbref_name']
         fb_compact = fb_name.replace(" ", "").replace("-", "").replace(".", "")
@@ -53,7 +63,7 @@ def find_best_match(fpl_row, fbref_df):
         if second_compact in fb_compact and len(second_compact) > 3:
             return fb_name
 
-    # 4. Team-filtered fuzzy match (if FBref team data is available)
+    # 4. Team-filtered fuzzy match
     if 'team' in fbref_df.columns:
         team_subset = fbref_df[fbref_df['clean_team'].str.contains(fpl_team, na=False)]
         if not team_subset.empty:
@@ -73,7 +83,7 @@ def find_best_match(fpl_row, fbref_df):
     return None
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets using Context-Aware Fuzzy Logic...")
+    logger.info("Aligning FPL and FBref datasets using Context-Aware Fuzzy Logic & Overrides...")
     
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
@@ -94,6 +104,20 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         
         match_rate = df['matched_fbref_name'].notna().mean() * 100
         logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
+        
+        # LOGGING THE FAILURES
+        unmatched_fpl = df[df['matched_fbref_name'].isnull()]
+        if not unmatched_fpl.empty:
+            logger.warning(f"--- UNMATCHED FPL PLAYERS ({len(unmatched_fpl)}) ---")
+            for _, row in unmatched_fpl.iterrows():
+                # Only warn loudly if they cost more than 4.5m (likely a senior player)
+                cost = float(row.get('now_cost', 0)) / 10
+                if cost > 4.5:
+                    logger.warning(f"HIGH VALUE UNMATCHED: {row.get('web_name')} ({row.get('team_code')}) - £{cost}m [Full Name: {row.get('first_name')} {row.get('second_name')}]")
+                else:
+                    logger.debug(f"Unmatched (Budget/Youth): {row.get('web_name')} ({row.get('team_code')}) - £{cost}m")
+            logger.warning("-----------------------------------------")
+            
     else:
         df = fpl_df.copy()
     
