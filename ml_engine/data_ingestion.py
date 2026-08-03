@@ -1,5 +1,5 @@
 """
-ml_engine/data_ingestion.py — Core Data Ingestion Module (Fully Stabilized MultiIndex Parser)
+ml_engine/data_ingestion.py — Core Data Ingestion Module (Guaranteed Name Resolution)
 """
 import pandas as pd
 import soccerdata as sd
@@ -33,10 +33,8 @@ def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
         stats_df = fbref.read_player_season_stats(stat_type="standard")
         
-        # Reset index to turn multi-index rows into columns
+        # Flatten MultiIndex columns robustly
         stats_df = stats_df.reset_index()
-        
-        # Robust MultiIndex / Tuple column flattening
         flat_cols = []
         for col in stats_df.columns:
             if isinstance(col, tuple):
@@ -49,30 +47,32 @@ def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
         clean_df = pd.DataFrame()
         col_lower = {str(c).lower(): c for c in stats_df.columns}
         
-        # 1. Target Player Name Column precisely
-        name_key = next((col_lower[k] for k in col_lower if 'player' in k or 'name' in k), None)
-        if name_key:
-            clean_df['name'] = stats_df[name_key]
-        else:
-            clean_df['name'] = stats_df.iloc[:, 0]
+        # GUARANTEED PLAYER NAME RESOLUTION: Explicitly find 'player' column, ignoring team/squad/nation
+        name_col = None
+        for k, orig_col in col_lower.items():
+            if 'player' in k and 'team' not in k and 'squad' not in k and 'nation' not in k:
+                name_col = orig_col
+                break
+        if not name_col:
+            # Fallback search for any column containing 'name'
+            name_col = next((col_lower[k] for k in col_lower if 'name' in k), stats_df.columns[0])
             
-        # 2. Target Minutes Played Column
+        clean_df['name'] = stats_df[name_col]
+        
+        # Extract metrics safely
         min_key = next((col_lower[k] for k in col_lower if ('min' in k or 'minute' in k) and '90' not in k), None)
         clean_df['minutes_played'] = stats_df[min_key] if min_key else 0.0
         
-        # 3. Target Expected Goals (xG) Column
         xg_key = next((col_lower[k] for k in col_lower if 'xg' in k and 'npxg' not in k and 'xag' not in k), None)
         clean_df['fbref_xg'] = stats_df[xg_key] if xg_key else 0.0
 
-        # 4. Target Non-Penalty xG (npxG) Column
         npxg_key = next((col_lower[k] for k in col_lower if 'npxg' in k), None)
         clean_df['fbref_npxg'] = stats_df[npxg_key] if npxg_key else 0.0
 
-        # 5. Target Expected Assisted Goals (xAG / xA) Column
         xag_key = next((col_lower[k] for k in col_lower if 'xag' in k or ('xa' in k and 'xg' not in k)), None)
         clean_df['fbref_xag'] = stats_df[xag_key] if xag_key else 0.0
 
-        # Failsafes and Type Conversions
+        # Type cleaning & Failsafes
         for col in ['name', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
             if col not in clean_df:
                 clean_df[col] = 0.0 if col != 'name' else "Unknown"
@@ -82,7 +82,6 @@ def fetch_fbref_data(leagues=None, seasons="2526") -> pd.DataFrame:
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
             
-        # AGGREGATION: Combine stats for multi-club or multi-row players
         grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
 
         logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
