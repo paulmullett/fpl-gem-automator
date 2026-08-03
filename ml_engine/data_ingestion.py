@@ -29,7 +29,7 @@ def fetch_fpl_data() -> pd.DataFrame:
         logger.error(f"Failed to fetch FPL API data: {e}")
         return pd.DataFrame()
 
-def fetch_fbref_data(leagues="ENG-Premier League", seasons="2425") -> pd.DataFrame:
+def fetch_fbref_data(leagues="Big 5 European Leagues", seasons="2526") -> pd.DataFrame:
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     try:
         fbref = sd.FBref(leagues=leagues, seasons=seasons)
@@ -42,8 +42,6 @@ def fetch_fbref_data(leagues="ENG-Premier League", seasons="2425") -> pd.DataFra
         for orig_col, str_col in zip(stats_df.columns, str_columns):
             if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
                 clean_df['name'] = stats_df[orig_col]
-            elif ('team' in str_col or 'squad' in str_col) and 'team' not in clean_df:
-                clean_df['team'] = stats_df[orig_col]
             elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
                 clean_df['minutes_played'] = stats_df[orig_col]
             elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
@@ -53,19 +51,22 @@ def fetch_fbref_data(leagues="ENG-Premier League", seasons="2425") -> pd.DataFra
             elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
                 clean_df['fbref_xg'] = stats_df[orig_col]
 
-        for col in ['name', 'team', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
+        # Failsafe for missing columns
+        for col in ['name', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
             if col not in clean_df:
-                clean_df[col] = 0.0 if col not in ['name', 'team'] else "Unknown"
+                clean_df[col] = 0.0 if col != 'name' else "Unknown"
         
+        # Clean and convert types
         clean_df['name'] = clean_df['name'].astype(str)
-        clean_df['team'] = clean_df['team'].astype(str)
-        
         numeric_cols = ['minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
+            
+        # AGGREGATION: If a player moved mid-season, combine their stats
+        grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
 
-        logger.info(f"Successfully scraped {len(clean_df)} player records from FBref natively.")
-        return clean_df
+        logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
+        return grouped_df
 
     except Exception as e:
         logger.error(f"Error fetching FBref data: {e}")
