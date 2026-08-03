@@ -62,10 +62,12 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
-          MANUAL_TRIGGER: ${{ github.event.inputs.run_type || 'auto' }}
+          ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
+          MANUAL_TRIGGER: ${{ github.event.inputs.workflow_phase || 'auto' }}
           ACTIVE_CHIP: ${{ github.event.inputs.active_chip || 'NONE' }}
-          XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
+          XMINS_INPUT: ${{ github.event.inputs.xmins_overrides || '' }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture || 'NEUTRAL' }}
+
         run: venv/bin/python fpl_bot.py
         
       - name: Commit Updated State Files
