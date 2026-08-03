@@ -1,5 +1,5 @@
 """
-ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine
+ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine (Team-Bounded)
 """
 import logging
 import pandas as pd
@@ -42,6 +42,8 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
         for orig_col, str_col in zip(stats_df.columns, str_columns):
             if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
                 clean_df['name'] = stats_df[orig_col]
+            elif ('squad' in str_col or 'team' in str_col) and 'team' not in clean_df:
+                clean_df['team'] = stats_df[orig_col]
             elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
                 clean_df['minutes_played'] = stats_df[orig_col]
             elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
@@ -51,19 +53,26 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
             elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
                 clean_df['fbref_xg'] = stats_df[orig_col]
 
-        # Failsafe for missing columns
-        for col in ['name', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
+        # Failsafes
+        for col in ['name', 'team', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']:
             if col not in clean_df:
-                clean_df[col] = 0.0 if col != 'name' else "Unknown"
+                clean_df[col] = 0.0 if col not in ['name', 'team'] else "Unknown"
         
-        # Clean and convert types
         clean_df['name'] = clean_df['name'].astype(str)
+        clean_df['team'] = clean_df['team'].astype(str)
+        
         numeric_cols = ['minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']
         for col in numeric_cols:
             clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
             
-        # AGGREGATION: If a player moved mid-season, combine their stats
-        grouped_df = clean_df.groupby('name', as_index=False)[numeric_cols].sum()
+        # AGGREGATION: Group by name and preserve the last recorded team for mid-season transfers
+        grouped_df = clean_df.groupby('name', as_index=False).agg({
+            'team': 'last',
+            'minutes_played': 'sum',
+            'fbref_xg': 'sum',
+            'fbref_npxg': 'sum',
+            'fbref_xag': 'sum'
+        })
 
         logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively.")
         return grouped_df

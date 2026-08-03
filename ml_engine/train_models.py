@@ -1,5 +1,5 @@
 """
-ml_engine/train_models.py — XGBoost Predictive Engine (Bayesian Shrinkage)
+ml_engine/train_models.py — XGBoost Predictive Engine (Team-Bounded Bipartite Matching)
 """
 
 import pandas as pd
@@ -11,7 +11,33 @@ import difflib
 
 logger = logging.getLogger(__name__)
 
-NAME_OVERRIDES = {}
+# Core mapping translation for FPL short codes to FBref team strings
+FPL_TO_FBREF_TEAM = {
+    "ARS": "Arsenal",
+    "AVL": "Aston Villa",
+    "BOU": "Bournemouth",
+    "BRE": "Brentford",
+    "BHA": "Brighton",
+    "CHE": "Chelsea",
+    "COV": "Coventry",
+    "CRY": "Crystal Palace",
+    "EVE": "Everton",
+    "FUL": "Fulham",
+    "HUL": "Hull",
+    "IPI": "Ipswich",
+    "LEE": "Leeds",
+    "LEI": "Leicester",
+    "LIV": "Liverpool",
+    "MCI": "Manchester City",
+    "MUN": "Manchester Utd",
+    "NEW": "Newcastle",
+    "NFO": "Nottingham", 
+    "SOU": "Southampton",
+    "SUN": "Sunderland",
+    "TOT": "Tottenham",
+    "WHU": "West Ham",
+    "WOL": "Wolves"
+}
 
 def strip_accents(text):
     try:
@@ -27,27 +53,50 @@ def find_best_match(fpl_row, fbref_df):
     second_name = strip_accents(fpl_row.get('second_name', ''))
     full_name = f"{first_name} {second_name}".strip()
     
-    # 0. Manual Overrides
-    if web_name in NAME_OVERRIDES: return NAME_OVERRIDES[web_name]
-    if full_name in NAME_OVERRIDES: return NAME_OVERRIDES[full_name]
+    team_code = fpl_row.get('team_code', '')
+    target_team = strip_accents(FPL_TO_FBREF_TEAM.get(team_code, ''))
     
-    fbref_names = fbref_df['clean_fbref_name'].tolist()
-    
-    # 1. Exact matches
-    if full_name in fbref_names: return full_name
-    if web_name in fbref_names: return web_name
-    
-    # 2. Strict Fallback Fuzzy Match (Cutoff 0.85 prevents cross-league false positives)
-    fuzzy = difflib.get_close_matches(full_name, fbref_names, n=1, cutoff=0.85)
-    if fuzzy: return fuzzy[0]
-    
-    fuzzy_web = difflib.get_close_matches(web_name, fbref_names, n=1, cutoff=0.85)
-    if fuzzy_web: return fuzzy_web[0]
+    # 1. Isolate search space to the player's specific team (reduces pool from 2800 to ~25)
+    if target_team:
+        team_pool = fbref_df[fbref_df['clean_team'].str.contains(target_team, na=False, regex=False)]
+    else:
+        team_pool = pd.DataFrame()
         
+    # 2. Execute Team-Bounded Match
+    if not team_pool.empty:
+        team_names = team_pool['clean_fbref_name'].tolist()
+        
+        # Exact match inside squad
+        if full_name in team_names: return full_name
+        if web_name in team_names: return web_name
+        
+        # Token check (e.g. "White" matching inside "Ben White" for Arsenal)
+        for fb_name in team_names:
+            if second_name and second_name in fb_name.split(): return fb_name
+            if web_name and web_name in fb_name.split(): return fb_name
+            if '-' in second_name:
+                for part in second_name.split('-'):
+                    if len(part) > 3 and part in fb_name.split(): return fb_name
+        
+        # Low-threshold fuzzy match since the pool is bounded to a single squad
+        fuzzy = difflib.get_close_matches(full_name, team_names, n=1, cutoff=0.55)
+        if fuzzy: return fuzzy[0]
+        
+        fuzzy_web = difflib.get_close_matches(web_name, team_names, n=1, cutoff=0.55)
+        if fuzzy_web: return fuzzy_web[0]
+
+    # 3. Global Fallback (for recent inter-league transfers without updated FBref teams)
+    global_names = fbref_df['clean_fbref_name'].tolist()
+    if full_name in global_names: return full_name
+    if web_name in global_names: return web_name
+    
+    fuzzy_global = difflib.get_close_matches(full_name, global_names, n=1, cutoff=0.85)
+    if fuzzy_global: return fuzzy_global[0]
+    
     return None
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets using Context-Aware Fuzzy Logic & Overrides...")
+    logger.info("Aligning FPL and FBref datasets using Team-Bounded Bipartite Matching...")
     
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
@@ -93,14 +142,10 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     logger.info("Applying Positional Bayesian Shrinkage to per-90 metrics...")
     df['cost'] = pd.to_numeric(df['now_cost'], errors='coerce') / 10.0
     
-    # FPL element_types: 1=GK, 2=DEF, 3=MID, 4=FWD
     df['pos_type'] = pd.to_numeric(df['element_type'], errors='coerce').fillna(3)
     
-    # Define Positional Priors (Expected League Averages per 90)
     prior_xg = {1: 0.00, 2: 0.04, 3: 0.15, 4: 0.38}
     prior_xag = {1: 0.00, 2: 0.06, 3: 0.12, 4: 0.15}
-    
-    # The "Gravity" of the prior (900 minutes = 10 full matches)
     prior_90s = 900.0 / 90.0 
     
     df['prior_xg90'] = df['pos_type'].map(prior_xg)
@@ -108,7 +153,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     
     player_90s = df['minutes_played'] / 90.0
     
-    # Bayesian Formula: ((Player Total Stat) + (Prior Stat/90 * Prior 90s)) / (Player 90s + Prior 90s)
     df['xg_per_90'] = (df['fbref_xg'] + (df['prior_xg90'] * prior_90s)) / (player_90s + prior_90s)
     df['xag_per_90'] = (df['fbref_xag'] + (df['prior_xag90'] * prior_90s)) / (player_90s + prior_90s)
     
