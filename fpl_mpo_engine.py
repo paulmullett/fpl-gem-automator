@@ -97,13 +97,16 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3
 
-        # Starting XI Constraints (1 GKP, 3-5 DEF, 3-5 MID, 1-3 FWD)
+       # Starting XI Position Constraints (1 GKP, 3-4 DEF, 3-5 MID, 1-3 FWD)
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3
-        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 5
+        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 4 # Strictly kills 5-at-the-back
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 3
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
+        # Squad Structure Guardrail: Force £4.0m/£4.5m GK Fodder Meta
+        # Caps total expenditure on Goalkeepers to £9.5m (Ensures one premium/mid starter + one cheap bench fodder)
+        prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) <= 9.5
         # Max 3 players per club rule
         team_ids = set(players[pid]["team_id"] for pid in valid_pids if players[pid].get("team_id"))
         for team_id in team_ids:
