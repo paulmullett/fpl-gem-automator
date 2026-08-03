@@ -44,6 +44,10 @@ def estimate_xmins(p: Dict[str, Any]) -> float:
     if cost >= 7.0:
         base_xmins = max(base_xmins, 80.0)
 
+    # PREMIUM BACKUP TAX: Penalize mid-premium assets at top clubs with near-zero ownership
+    if team in PREMIUM_TEAMS and 5.0 <= cost < 7.0 and own < 1.5:
+        base_xmins *= 0.15  # Slashes expected minutes for expensive bench players
+
     if chance_raw is not None:
         chance_str = str(chance_raw)
         if chance_str == "25": base_xmins *= 0.25

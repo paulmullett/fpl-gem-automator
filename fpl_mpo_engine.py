@@ -94,6 +94,11 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # Budget constraint
         prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids) <= total_liquid_budget
 
+        # Maximum of 3 players per real-world club
+        team_ids = set(players[pid]["team_id"] for pid in valid_pids if players[pid].get("team_id"))
+        for team_id in team_ids:
+            prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
+
         # Squad budget distribution constraints (prevents £23.5m+ bench hoarding)
         # Max 11 players costing >= £6.0m (forces 4+ cheap budget enablers across bench/squad)
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["cost"] >= 6.0) <= 11
@@ -135,7 +140,8 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]")
         
         if peak_swing_team:
-            transfer_plan.append(f"AUTOMATED SWING ALERT: Team ID {peak_swing_team} exhibits primary 4-GW fixture green wave.")
+            team_name_str = next((p["team"] for p in players.values() if p.get("team_id") == peak_swing_team), str(peak_swing_team))
+        transfer_plan.append(f"AUTOMATED SWING ALERT: {team_name_str} exhibits primary 4-GW fixture green wave.")
     else:
         logger.warning("MPO Solver failed to find optimal path, falling back to 1-GW greedy selection.")
         sorted_fallback = sorted([p for p in players.values() if p.get("status") in ["a", "d", ""]], 
