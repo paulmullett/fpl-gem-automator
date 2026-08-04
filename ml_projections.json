@@ -68,7 +68,7 @@
         "ml_ev_8gw": 38.01,
         "mc_floor_ev": 3.0,
         "mc_ceiling_ev": 7.5,
-        "top_10k_eo": 15.5,
+        "top_10k_eo": 15.6,
         "predicted_price_delta": 0.0
     },
     "9": {
@@ -1350,12 +1350,12 @@
         "predicted_price_delta": 0.0
     },
     "149": {
-        "ml_xmins": 8.3,
+        "ml_xmins": 8.2,
         "ml_ev_1gw": 1.12,
         "ml_ev_8gw": 8.5,
         "mc_floor_ev": 0.67,
         "mc_ceiling_ev": 1.68,
-        "top_10k_eo": 0.95,
+        "top_10k_eo": 0.9,
         "predicted_price_delta": 0.0
     },
     "150": {
@@ -1827,12 +1827,12 @@
         "predicted_price_delta": 0.0
     },
     "198": {
-        "ml_xmins": 79.3,
-        "ml_ev_1gw": 3.29,
+        "ml_xmins": 79.5,
+        "ml_ev_1gw": 3.3,
         "ml_ev_8gw": 25.04,
         "mc_floor_ev": 1.98,
         "mc_ceiling_ev": 4.94,
-        "top_10k_eo": 1.5,
+        "top_10k_eo": 1.55,
         "predicted_price_delta": 0.0
     },
     "199": {
@@ -3182,7 +3182,7 @@
         "ml_ev_8gw": 32.74,
         "mc_floor_ev": 2.58,
         "mc_ceiling_ev": 6.46,
-        "top_10k_eo": 21.9,
+        "top_10k_eo": 22.0,
         "predicted_price_delta": 0.0
     },
     "347": {
@@ -4149,12 +4149,12 @@
         "predicted_price_delta": 0.0
     },
     "449": {
-        "ml_xmins": 81.6,
+        "ml_xmins": 81.8,
         "ml_ev_1gw": 3.35,
         "ml_ev_8gw": 25.44,
         "mc_floor_ev": 2.01,
         "mc_ceiling_ev": 5.02,
-        "top_10k_eo": 2.05,
+        "top_10k_eo": 2.1,
         "predicted_price_delta": 0.0
     },
     "450": {
