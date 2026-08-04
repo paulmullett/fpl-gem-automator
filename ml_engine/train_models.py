@@ -224,8 +224,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "ml_xmins": round(xmins, 1),
             "ml_ev_1gw": round(calculated_ev, 2),
             "ml_ev_8gw": round(calculated_ev * 8 * 0.95, 2),
-            "ml_variance_floor": round(calculated_ev * 0.6, 2),
-            "ml_variance_ceiling": round(calculated_ev * 1.5, 2)
+            "mc_floor_ev": round(calculated_ev * 0.6, 2),    # Aligned key for solver
+            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),  # Aligned key for solver
+            "top_10k_eo": round(top_10k_eo, 2)               # Export EO to solver
         }
         
     logger.info(f"Successfully generated projections for {len(projections)} players using rich math engine.")
