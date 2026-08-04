@@ -12,6 +12,12 @@ def _safe_float(v: Any, default: float = 0.0) -> float:
     except Exception:
         return default
 
+def poisson_prob_ge(k: int, lam: float) -> float:
+    """Calculates the probability of hitting a threshold k given Poisson intensity lambda."""
+    if lam <= 0: return 0.0
+    cdf = sum((math.exp(-lam) * (lam**i)) / math.factorial(i) for i in range(k))
+    return max(0.0, 1.0 - cdf)
+
 def estimate_xmins(p: Dict[str, Any]) -> float:
     chance_raw = p.get("chance_of_playing_next_round")
     if chance_raw is not None and str(chance_raw) == "0": return 0.0
@@ -153,6 +159,21 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["pen_order"] = raw_p.get("penalties_order")
     p["set_piece_order"] = raw_p.get("corners_and_indirect_freekicks_order")
 
+    # --- NEW: Defensive Contribution (CBIT/CBIRT) Native Extraction ---
+    mins_played = max(0.001, _safe_float(raw_p.get("minutes", 0.0)))
+    
+    cbit_total = sum([
+        _safe_float(raw_p.get("clearances", 0)),
+        _safe_float(raw_p.get("blocks", 0)),
+        _safe_float(raw_p.get("interceptions", 0)),
+        _safe_float(raw_p.get("tackles", 0))
+    ])
+    recoveries_total = _safe_float(raw_p.get("recoveries", 0))
+    
+    p["fpl_mins_played"] = mins_played
+    p["fpl_cbit_90"] = (cbit_total / mins_played) * 90.0 if mins_played > 0 else 0.0
+    p["fpl_cbirt_90"] = ((cbit_total + recoveries_total) / mins_played) * 90.0 if mins_played > 0 else 0.0
+
     return p
 
 def get_gameweek_state(bootstrap_data: Dict[str, Any]):
@@ -242,13 +263,42 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     elif pos_id == 3: cs_points = (cs_prob * 1.0) * prob_60
     else: cs_points = 0.0
 
-    # 3. Defensive Extra Points
+    # 3. Defensive Extra Points & Hybrid CBIT/CBIRT Probabilities
     extra_defensive_points = 0.0
     if pos_id == 1:
         estimated_saves = max(1.5, (xgc * 1.4))
         extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
-    elif pos_id == 2:
-        extra_defensive_points = 0.22 * mins_factor if cost >= 5.5 else 0.08
+    elif pos_id in [2, 3, 4]:
+        # --- THE HYBRID BAYESIAN ANCHOR ---
+        # Trust factor scales from 0.0 to 1.0 as the player reaches 360 mins (4 full games)
+        fpl_mins = _safe_float(p.get("fpl_mins_played", 0.0))
+        trust_factor = min(1.0, fpl_mins / 360.0)
+        
+        # Determine the Anchor (Historical FBref or Positional Pricing Prior)
+        fbref_cbit = _safe_float(p.get("fbref_cbit_90"), 0.0)
+        fbref_cbirt = _safe_float(p.get("fbref_cbirt_90"), 0.0)
+        
+        if pos_id == 2: # Defenders
+            # If no FBref data, center backs (~£5.0m+) hit ~11.5, attacking FBs (~£4.5m) hit ~8.0
+            prior_cbit = fbref_cbit if fbref_cbit > 0 else (11.5 if cost >= 5.0 else 8.5)
+            fpl_cbit = _safe_float(p.get("fpl_cbit_90", 0.0))
+            
+            hybrid_cbit = (fpl_cbit * trust_factor) + (prior_cbit * (1.0 - trust_factor))
+            expected_actions = hybrid_cbit * mins_factor
+            
+            prob_threshold = poisson_prob_ge(10, expected_actions)
+            extra_defensive_points = (prob_threshold * 2.0) * prob_60
+            
+        elif pos_id in [3, 4]: # Midfielders / Forwards
+            # Defensive mids hit ~13.5 CBIRT, attacking wingers hit ~6.0
+            prior_cbirt = fbref_cbirt if fbref_cbirt > 0 else (13.5 if cost <= 5.5 else 7.0)
+            fpl_cbirt = _safe_float(p.get("fpl_cbirt_90", 0.0))
+            
+            hybrid_cbirt = (fpl_cbirt * trust_factor) + (prior_cbirt * (1.0 - trust_factor))
+            expected_actions = hybrid_cbirt * mins_factor
+            
+            prob_threshold = poisson_prob_ge(12, expected_actions)
+            extra_defensive_points = (prob_threshold * 2.0) * prob_60
 
     # 4. Attacking Points with Value Multiplier
     market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04)
