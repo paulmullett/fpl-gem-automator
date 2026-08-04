@@ -7,6 +7,35 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+def get_combinatorial_bench_weights(likely_starters_xmins):
+    """
+    Calculates exact probabilities of needing 1, 2, or 3 outfield subs 
+    using a Poisson Binomial distribution matrix.
+    """
+    # Array of probabilities that each starter MISSES the game entirely
+    p_miss = [max(0.0, 1.0 - (xm / 90.0)) for xm in likely_starters_xmins]
+    
+    # dp[absences] = exact probability of that many simultaneous absences
+    dp = {0: 1.0}
+    for p in p_miss:
+        next_dp = {}
+        for absences, prob in dp.items():
+            # Player plays (0 absences added)
+            next_dp[absences] = next_dp.get(absences, 0.0) + prob * (1.0 - p)
+            # Player misses (1 absence added)
+            next_dp[absences + 1] = next_dp.get(absences + 1, 0.0) + prob * p
+        dp = next_dp
+        
+    # Cumulative probabilities for FPL bench slots
+    # Bench 1 triggers if 1 OR MORE starters miss
+    b1_weight = sum(prob for absences, prob in dp.items() if absences >= 1)
+    # Bench 2 triggers if 2 OR MORE starters miss
+    b2_weight = sum(prob for absences, prob in dp.items() if absences >= 2)
+    # Bench 3 triggers if 3 OR MORE starters miss
+    b3_weight = sum(prob for absences, prob in dp.items() if absences >= 3)
+    
+    return b1_weight, b2_weight, b3_weight
+
 def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: list, 
                             total_liquid_budget: float, free_transfers: int, 
                             active_chip: str = "NONE", horizons: int = 8, 
@@ -65,7 +94,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
     discount_factor = 0.85
     objective_terms = []
-    w_bench = 0.05  # Bench EV weighted at 5% auto-sub probability
 
     for t in range(horizons):
         t_weight = discount_factor ** t
@@ -83,7 +111,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             # Co-optimize Starting XI EV + Captain 2x Multiplier + Bench EV
             objective_terms.append(t_weight * base_ev * s[pid, t])
             objective_terms.append(t_weight * base_ev * cap_mult * c[pid, t])
-            objective_terms.append(t_weight * base_ev * w_bench * (x[pid, t] - s[pid, t]))
 
         # Transfer hit penalties (-4 pts per hit)
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
@@ -152,6 +179,39 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 
                 handshake_bonus = backup_full_ev * missing_xmins_factor * t_weight
                 objective_terms.append(handshake_bonus * gk_pair[t_id, t])
+
+        # --- NEW: Combinatorial Auto-Sub Probability Matrix ---
+        # 1. Identify the 10 most likely outfield starters to calculate squad fragility
+        outfield_pids = [pid for pid in valid_pids if players[pid]["pos_id"] != 1]
+        top_10_outfield = sorted(outfield_pids, key=lambda p: ev_matrix[p][t], reverse=True)[:10]
+        likely_xmins = [players[p].get("xmins", 90.0) for p in top_10_outfield]
+        
+        # 2. Extract exact combinatorial absence weights for this specific gameweek
+        b1_wt, b2_wt, b3_wt = get_combinatorial_bench_weights(likely_xmins)
+        
+        # 3. Create explicit ordered bench slot decision variables
+        b1 = pulp.LpVariable.dicts(f"b1_{t}", outfield_pids, cat="Binary")
+        b2 = pulp.LpVariable.dicts(f"b2_{t}", outfield_pids, cat="Binary")
+        b3 = pulp.LpVariable.dicts(f"b3_{t}", outfield_pids, cat="Binary")
+        
+        # 4. Enforce structural limits (Exactly one player per bench slot)
+        prob += pulp.lpSum(b1[p] for p in outfield_pids) == 1
+        prob += pulp.lpSum(b2[p] for p in outfield_pids) == 1
+        prob += pulp.lpSum(b3[p] for p in outfield_pids) == 1
+        
+        for p in outfield_pids:
+            # A player can only occupy a bench slot if they are selected but NOT starting
+            prob += b1[p] + b2[p] + b3[p] == x[p, t] - s[p, t]
+            
+        # 5. Enforce FPL Auto-Sub Order (Highest EV is forced onto Bench 1)
+        prob += pulp.lpSum(ev_matrix[p][t] * b1[p] for p in outfield_pids) >= pulp.lpSum(ev_matrix[p][t] * b2[p] for p in outfield_pids)
+        prob += pulp.lpSum(ev_matrix[p][t] * b2[p] for p in outfield_pids) >= pulp.lpSum(ev_matrix[p][t] * b3[p] for p in outfield_pids)
+        
+        # 6. Apply the dynamic combinatorial weights to the objective function
+        for p in outfield_pids:
+            objective_terms.append(ev_matrix[p][t] * b1[p] * b1_wt * (discount_factor**t))
+            objective_terms.append(ev_matrix[p][t] * b2[p] * b2_wt * (discount_factor**t))
+            objective_terms.append(ev_matrix[p][t] * b3[p] * b3_wt * (discount_factor**t))
 
         # Squad continuity
         for pid in valid_pids:
