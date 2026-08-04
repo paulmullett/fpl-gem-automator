@@ -202,12 +202,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for p in gk_pids:
             objective_terms.append(ev_matrix[p][t] * (x[p, t] - s[p, t]) * 0.01 * (discount_factor**t))
         
-        # 6. Apply the dynamic combinatorial weights to the objective function
-        for p in outfield_pids:
-            objective_terms.append(ev_matrix[p][t] * b1[p] * b1_wt * (discount_factor**t))
-            objective_terms.append(ev_matrix[p][t] * b2[p] * b2_wt * (discount_factor**t))
-            objective_terms.append(ev_matrix[p][t] * b3[p] * b3_wt * (discount_factor**t))
-
         # Squad continuity
         for pid in valid_pids:
             if t == 0:
