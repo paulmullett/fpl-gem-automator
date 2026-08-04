@@ -183,29 +183,24 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # --- NEW: Combinatorial Auto-Sub Probability Matrix ---
         # 1. Identify the 10 most likely outfield starters to calculate squad fragility
         outfield_pids = [pid for pid in valid_pids if players[pid]["pos_id"] != 1]
+        gk_pids = [pid for pid in valid_pids if players[pid]["pos_id"] == 1]
         top_10_outfield = sorted(outfield_pids, key=lambda p: ev_matrix[p][t], reverse=True)[:10]
         likely_xmins = [players[p].get("xmins", 90.0) for p in top_10_outfield]
         
         # 2. Extract exact combinatorial absence weights for this specific gameweek
         b1_wt, b2_wt, b3_wt = get_combinatorial_bench_weights(likely_xmins)
         
-        # 3. Create explicit ordered bench slot decision variables
-        b1 = pulp.LpVariable.dicts(f"b1_{t}", outfield_pids, cat="Binary")
-        b2 = pulp.LpVariable.dicts(f"b2_{t}", outfield_pids, cat="Binary")
-        b3 = pulp.LpVariable.dicts(f"b3_{t}", outfield_pids, cat="Binary")
+        # 3. Calculate the Blended Bench Weight to avoid Branch-and-Bound Thrashing
+        # Averages the probability across the 3 available outfield slots
+        blended_bench_wt = (b1_wt + b2_wt + b3_wt) / 3.0
         
-        # 4. Enforce structural limits (Exactly one player per bench slot)
-        prob += pulp.lpSum(b1[p] for p in outfield_pids) == 1
-        prob += pulp.lpSum(b2[p] for p in outfield_pids) == 1
-        prob += pulp.lpSum(b3[p] for p in outfield_pids) == 1
-        
+        # 4. Apply dynamic combinatorial weight to the outfield bench
         for p in outfield_pids:
-            # A player can only occupy a bench slot if they are selected but NOT starting
-            prob += b1[p] + b2[p] + b3[p] == x[p, t] - s[p, t]
-            
-        # 5. Enforce FPL Auto-Sub Order (Highest EV is forced onto Bench 1)
-        prob += pulp.lpSum(ev_matrix[p][t] * b1[p] for p in outfield_pids) >= pulp.lpSum(ev_matrix[p][t] * b2[p] for p in outfield_pids)
-        prob += pulp.lpSum(ev_matrix[p][t] * b2[p] for p in outfield_pids) >= pulp.lpSum(ev_matrix[p][t] * b3[p] for p in outfield_pids)
+            objective_terms.append(ev_matrix[p][t] * (x[p, t] - s[p, t]) * blended_bench_wt * (discount_factor**t))
+
+        # 5. Apply minimal fallback weight to backup GKs (Handshake bonus handles same-team pairings)
+        for p in gk_pids:
+            objective_terms.append(ev_matrix[p][t] * (x[p, t] - s[p, t]) * 0.01 * (discount_factor**t))
         
         # 6. Apply the dynamic combinatorial weights to the objective function
         for p in outfield_pids:
@@ -224,9 +219,10 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
 
-   # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
+    # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
     try:
-        prob.solve(pulp.HiGHS_CMD(msg=False))
+        # 30-second time limit prevents infinite branching loops
+        prob.solve(pulp.HiGHS_CMD(msg=False, timeLimit=30))
     except Exception as e:
         print(f"HiGHS solver not available ({e}), falling back to CBC.")
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
