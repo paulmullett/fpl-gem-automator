@@ -47,10 +47,27 @@ def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "Championship")
             # Convert "2526" to "2025-2026" for the URL path
             s_yr = f"20{seasons[:2]}-20{seasons[2:]}"
             url = f"https://fbref.com/en/comps/10/{s_yr}/stats/{s_yr}-Championship-Stats"
+
+            if "Championship" in league:
+            # soccerdata hardcodes Tier-1 leagues and rejects the Championship.
+            # We bypass it here by natively scraping the FBref historical URL.
+            logger.info("Bypassing soccerdata to scrape Championship data natively...")
             
+            # Direct URL for the current Championship player stats
+            url = "https://fbref.com/en/comps/10/stats/Championship-Stats"
+            
+                
             try:
-                # Use a realistic User-Agent to bypass Sports Reference's basic bot protection
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                # FBref strictly requires 'sec-ch-ua' and realistic browser headers to bypass 403 blocks
+                headers = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138.0.0.0 Safari/537.36",
+                    "sec-ch-ua": '"Not)A;Brand";v="8", "Chromium";v="138", "Google Chrome";v="138"',
+                    "sec-ch-ua-mobile": "?0",
+                    "sec-ch-ua-platform": '"Windows"',
+                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+                    "Accept-Language": "en-US,en;q=0.9"
+                }
+                
                 response = requests.get(url, headers=headers, timeout=15)
                 response.raise_for_status()
                 
