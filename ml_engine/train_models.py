@@ -171,8 +171,18 @@ def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
         
     return crowd_xmins
 
-def get_upcoming_opponent_mapping(current_gw: int) -> dict:
-    """Fetches upcoming fixtures and returns a mapping of team_id -> opponent_team_id."""
+def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
+    """Fetches upcoming fixtures and returns a mapping of team_id (int) -> opponent_team_id (int)."""
+    if current_gw is None:
+        try:
+            bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
+            next_events = [e for e in bootstrap['events'] if e['is_next']]
+            if not next_events:
+                next_events = [e for e in bootstrap['events'] if e['is_current']]
+            current_gw = next_events[0]['id'] if next_events else 1
+        except Exception:
+            current_gw = 1
+
     opp_map = {}
     try:
         url = f"https://fantasy.premierleague.com/api/fixtures/?event={current_gw}"
@@ -183,8 +193,8 @@ def get_upcoming_opponent_mapping(current_gw: int) -> dict:
                 h_team = f.get('team_h')
                 a_team = f.get('team_a')
                 if h_team and a_team:
-                    opp_map[h_team] = a_team
-                    opp_map[a_team] = h_team
+                    opp_map[int(h_team)] = int(a_team)
+                    opp_map[int(a_team)] = int(h_team)
     except Exception as e:
         logger.warning(f"Could not fetch upcoming fixture mapping: {e}")
     return opp_map
@@ -222,24 +232,35 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
     projections = {}
 
-    # --- NEW: Wire Dynamic Matchup Ratings ---
+    # --- Dynamic Matchup Rating Wiring ---
     from ml_engine.data_ingestion import get_team_matchup_ratings
     
     team_ratings = get_team_matchup_ratings(fbref_df)
-    opp_mapping = get_upcoming_opponent_mapping(current_gw=1) # Target current GW
+    opp_mapping = get_upcoming_opponent_mapping()
     
-    # Map team names/IDs from bootstrap
+    # Map team IDs to FPL Short Names ("ARS", "MCI")
     bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
-    teams_by_id = {t['id']: t['name'] for t in bootstrap.get('teams', [])}
+    teams_short_by_id = {t['id']: t['short_name'] for t in bootstrap.get('teams', [])}
     
-    # Calculate per-player opponent defensive rating
     def calculate_player_opp_rating(row):
-        player_team_id = row.get('team_code') or row.get('team')
+        # 1. Extract integer FPL team ID
+        player_team_id = int(row['team']) if pd.notna(row.get('team')) else None
+        if not player_team_id:
+            return 1.0
+            
+        # 2. Lookup integer opponent team ID
         opp_id = opp_mapping.get(player_team_id)
-        if opp_id and opp_id in teams_by_id:
-            opp_name = teams_by_id[opp_id]
-            # Fetch opponent's defensive rating (default to 1.0 if unavailable)
-            return team_ratings.get(opp_name, {}).get('attack_rating', 1.0)
+        if not opp_id:
+            return 1.0
+            
+        # 3. Resolve opponent FPL short name -> FBref full name
+        opp_short = teams_short_by_id.get(opp_id)
+        opp_fbref_name = FPL_TO_FBREF_TEAM.get(opp_short, "")
+        
+        # 4. Extract opponent defensive frailty rating
+        if opp_fbref_name and opp_fbref_name in team_ratings:
+            return team_ratings[opp_fbref_name].get('def_rating', 1.0)
+            
         return 1.0
 
     df['opponent_def_rating'] = df.apply(calculate_player_opp_rating, axis=1)
