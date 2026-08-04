@@ -736,10 +736,10 @@
     },
     "106": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 5.11,
-        "ml_ev_8gw": 38.82,
+        "ml_ev_1gw": 5.1,
+        "ml_ev_8gw": 38.78,
         "ml_variance_floor": 3.06,
-        "ml_variance_ceiling": 7.66
+        "ml_variance_ceiling": 7.65
     },
     "107": {
         "ml_xmins": 3.6,
@@ -861,9 +861,9 @@
         "ml_variance_ceiling": 5.25
     },
     "124": {
-        "ml_xmins": 85.9,
+        "ml_xmins": 86.0,
         "ml_ev_1gw": 3.56,
-        "ml_ev_8gw": 27.03,
+        "ml_ev_8gw": 27.04,
         "ml_variance_floor": 2.13,
         "ml_variance_ceiling": 5.34
     },
@@ -3445,10 +3445,10 @@
     },
     "480": {
         "ml_xmins": 90.0,
-        "ml_ev_1gw": 4.03,
-        "ml_ev_8gw": 30.59,
-        "ml_variance_floor": 2.42,
-        "ml_variance_ceiling": 6.04
+        "ml_ev_1gw": 4.02,
+        "ml_ev_8gw": 30.57,
+        "ml_variance_floor": 2.41,
+        "ml_variance_ceiling": 6.03
     },
     "482": {
         "ml_xmins": 83.2,
