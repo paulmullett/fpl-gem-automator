@@ -187,14 +187,26 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             else:
                 top_10k_eo = global_own
 
+        # --- NEW: Price Volatility Prediction ---
+        transfers_in = int(row.get('transfers_in_event', 0) or 0)
+        transfers_out = int(row.get('transfers_out_event', 0) or 0)
+        net_transfers = transfers_in - transfers_out
+        
+        predicted_delta = 0.0
+        if net_transfers > 75000:
+            predicted_delta = 0.1
+        elif net_transfers < -75000:
+            predicted_delta = -0.1
+
         player_obj = {
             "id": row['id'],
             "name": web_name,
             "team": row.get('team_code', 'UNK'),
             "pos_id": int(row.get('element_type', 3)),
             "cost": cost_float,
+            "predicted_price_delta": predicted_delta, # --- NEW INJECTION ---
             "own": global_own,
-            "top_10k_eo": round(top_10k_eo, 2), # --- NEW INJECTION ---
+            "top_10k_eo": round(top_10k_eo, 2),
             "status": str(row.get('status', 'a')),
             "ep_next": float(row.get('ep_next', 0.0) or 0.0),
             "form": float(row.get('form', 0.0) or 0.0),
@@ -224,9 +236,10 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "ml_xmins": round(xmins, 1),
             "ml_ev_1gw": round(calculated_ev, 2),
             "ml_ev_8gw": round(calculated_ev * 8 * 0.95, 2),
-            "mc_floor_ev": round(calculated_ev * 0.6, 2),    # Aligned key for solver
-            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),  # Aligned key for solver
-            "top_10k_eo": round(top_10k_eo, 2)               # Export EO to solver
+            "mc_floor_ev": round(calculated_ev * 0.6, 2),    
+            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),  
+            "top_10k_eo": round(top_10k_eo, 2),               
+            "predicted_price_delta": predicted_delta         # Export to MILP solver
         }
         
     logger.info(f"Successfully generated projections for {len(projections)} players using rich math engine.")

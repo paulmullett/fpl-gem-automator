@@ -151,16 +151,25 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 3
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
-        # Squad Structure Guardrail: Force £4.0m/£4.5m GK Fodder Meta
-        prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) <= 9.5
+       # --- NEW: Dynamic Time-Horizon Pricing ---
+        # Base cost compounds by the predicted delta multiplied by the gameweek horizon index
+        
+        # Squad Structure Guardrail: Force £4.0m/£4.5m GK Fodder Meta using projected costs
+        prob += pulp.lpSum(
+            (players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * x[pid, t] 
+            for pid in valid_pids if players[pid]["pos_id"] == 1
+        ) <= 9.5
         
         # Max 3 players per club rule
         team_ids = set(players[pid]["team_id"] for pid in valid_pids if players[pid].get("team_id"))
         for team_id in team_ids:
             prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
-        # Total Financial Budget
-        prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids) <= total_liquid_budget
+        # Total Financial Budget using projected costs
+        prob += pulp.lpSum(
+            (players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * x[pid, t] 
+            for pid in valid_pids
+        ) <= total_liquid_budget
 
         # Same-Team Goalkeeper Handshake Constraints
         for t_id, gks in gk_by_team.items():
