@@ -203,11 +203,8 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     logger.info("Aligning FPL and FBref datasets...")
     
     top10k_eo_dict = get_livefpl_top10k_eo()
-    
-    # --- NEW: Initialize Crowdsourced xMins ---
     crowd_xmins_dict = get_crowdsourced_xmins(fpl_df)
     
-    # Parse External xMins Overrides from GitHub Actions
     custom_xmins_dict = {}
     xmins_env = os.getenv("XMINS_INPUT", "")
     if xmins_env and xmins_env.strip():
@@ -223,7 +220,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
         
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
-        df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left')
+        
+        # FIX 1: Add suffixes to prevent the 'team' column collision during merge
+        df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left', suffixes=('', '_fbref'))
         
         match_rate = df['matched_fbref_name'].notna().mean() * 100
         logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
@@ -232,18 +231,18 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
     projections = {}
 
-    # --- Dynamic Matchup Rating Wiring ---
     from ml_engine.data_ingestion import get_team_matchup_ratings
     
+    # Use fpl_df as fallback for pre-season empty FBref stats
     team_ratings = get_team_matchup_ratings(fbref_df, fpl_df)
-    opp_mapping = get_upcoming_opponent_mapping()
+    opp_mapping = get_upcoming_opponent_mapping(current_gw=1)
     
     bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
     teams_short_by_id = {t['id']: t['short_name'] for t in bootstrap.get('teams', [])}
     
     def calculate_player_opp_rating(row):
-        # Force integer team ID lookup
         try:
+            # FIX 2: Safely extract integer ID now that suffixes prevent the overlap
             player_team_id = int(row['team'])
         except (ValueError, TypeError, KeyError):
             return 1.0
@@ -253,8 +252,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             return 1.0
             
         opp_short = teams_short_by_id.get(opp_id, "")
-        
-        # Look up using FPL team_code if FBref was empty, or FBref team name if available
         if opp_short in team_ratings:
             return team_ratings[opp_short]
             
@@ -281,9 +278,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             combined_xgi = (0.60 * fb_xgi_90) + (0.40 * native_xgi) if native_xgi > 0 else fb_xgi_90
         else:
             combined_xgi = native_xgi
-
-        opponent_def_rating = row.get('opponent_def_rating', 1.0) 
-        combined_xgi = combined_xgi * opponent_def_rating
 
         global_own = float(row.get('selected_by_percent', 0.0) or 0.0)
         cost_float = float(row.get('now_cost', 40)) / 10.0
@@ -334,24 +328,22 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         original_xmins = estimate_xmins(player_obj)
         calculated_ev = get_ensemble_ev(player_obj)
         
-        # --- NEW: Three-Tier xMins Hierarchy & Mathematical EV Scaling ---
-        # 1. Base Heuristic
+        # --- Three-Tier xMins Hierarchy & Mathematical EV Scaling ---
         final_xmins = original_xmins
-        
-        # 2. Crowdsourced Anchor
         if web_name in crowd_xmins_dict:
             final_xmins = crowd_xmins_dict[web_name]
-            
-        # 3. Human-In-The-Loop Override (Highest Priority)
         if web_name in custom_xmins_dict:
             final_xmins = float(custom_xmins_dict[web_name])
 
-        # Execute Mathematical EV Scaling if xMins shifted from the baseline heuristic
         if final_xmins != original_xmins:
             if original_xmins > 0:
                 calculated_ev = calculated_ev * (final_xmins / original_xmins)
             else:
                 calculated_ev = (combined_xgi * (final_xmins / 90.0)) + (2.0 * (final_xmins / 90.0))
+        
+        # FIX 3: Apply opponent matchup rating DIRECTLY to the final EV to bypass the Bayesian floor
+        opponent_def_rating = row.get('opponent_def_rating', 1.0)
+        calculated_ev = calculated_ev * opponent_def_rating
         
         projections[pid] = {
             "ml_xmins": round(final_xmins, 1),
