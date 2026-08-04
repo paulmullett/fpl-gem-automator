@@ -114,7 +114,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         
         # --- NEW: Tier-2 Step-Up Tax Adjustment ---
         source_league = row.get('source_league', 'Premier_League')
-        step_up_multiplier = 0.70 if source_league == 'Championship' else 1.0
+        step_up_multiplier = 0.70 if source_league == 'EFL Championship' else 1.0
 
         fb_xg = (float(row.get('fbref_xg', 0.0)) if pd.notna(row.get('fbref_xg')) else 0.0) * step_up_multiplier
         fb_xag = (float(row.get('fbref_xag', 0.0)) if pd.notna(row.get('fbref_xag')) else 0.0) * step_up_multiplier
