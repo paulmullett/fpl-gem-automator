@@ -124,11 +124,60 @@ def get_livefpl_top10k_eo():
         
     return eo_dict
 
+def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
+    """
+    Attempts to load crowdsourced xMins from a local 'fplreview.csv' or an external JSON API.
+    Fuzzy matches external names to FPL web_names.
+    """
+    logger.info("Checking for crowdsourced xMins data...")
+    crowd_xmins = {}
+    name_pool = fpl_df['web_name'].dropna().tolist()
+    
+    # 1. Try local CSV (Standard for FPL ML community)
+    if os.path.exists("fplreview.csv"):
+        try:
+            df = pd.read_csv("fplreview.csv")
+            # FPLReview standard columns: 'Name', '1_xMins'
+            name_col = next((c for c in df.columns if 'name' in c.lower()), None)
+            mins_col = next((c for c in df.columns if 'xmins' in c.lower() or 'mins' in c.lower()), None)
+            
+            if name_col and mins_col:
+                for _, row in df.iterrows():
+                    match = difflib.get_close_matches(str(row[name_col]), name_pool, n=1, cutoff=0.70)
+                    if match:
+                        crowd_xmins[match[0]] = float(row[mins_col])
+                logger.info(f"Loaded {len(crowd_xmins)} xMins projections from local fplreview.csv")
+                return crowd_xmins
+        except Exception as e:
+            logger.warning(f"Failed to parse local fplreview.csv: {e}")
+
+    # 2. Automated Remote Fallback Hook
+    url = os.getenv("CROWD_XMINS_URL", "")
+    if url:
+        try:
+            response = requests.get(url, timeout=10)
+            if response.status_code == 200:
+                data = response.json()
+                for ext_name, mins in data.items():
+                    match = difflib.get_close_matches(str(ext_name), name_pool, n=1, cutoff=0.70)
+                    if match:
+                        crowd_xmins[match[0]] = float(mins)
+                logger.info(f"Loaded {len(crowd_xmins)} xMins projections from external API.")
+        except Exception as e:
+            logger.warning(f"Failed to fetch remote xMins: {e}")
+
+    if not crowd_xmins:
+        logger.info("No crowdsourced xMins found. Pipeline will rely on internal heuristics.")
+        
+    return crowd_xmins
+
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     logger.info("Aligning FPL and FBref datasets...")
     
-    # --- NEW: Fetch Top 10k EO ---
     top10k_eo_dict = get_livefpl_top10k_eo()
+    
+    # --- NEW: Initialize Crowdsourced xMins ---
+    crowd_xmins_dict = get_crowdsourced_xmins(fpl_df)
     
     # Parse External xMins Overrides from GitHub Actions
     custom_xmins_dict = {}
@@ -170,24 +219,21 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         else:
             combined_xgi = native_xgi
 
-        # --- NEW: Top 10k EO Extraction & Heuristic Fallback ---
         global_own = float(row.get('selected_by_percent', 0.0) or 0.0)
         cost_float = float(row.get('now_cost', 40)) / 10.0
         
         if pid in top10k_eo_dict:
             top_10k_eo = top10k_eo_dict[pid]
         else:
-            # Mathematical Heuristic Fallback (Concentration of premium assets in Top 10k)
             if global_own > 30.0 and cost_float >= 10.0:
-                top_10k_eo = min(200.0, global_own * 1.6) # Accounts for Captaincy spikes
+                top_10k_eo = min(200.0, global_own * 1.6) 
             elif global_own > 20.0 and cost_float >= 7.0:
                 top_10k_eo = min(150.0, global_own * 1.3)
             elif global_own < 10.0:
-                top_10k_eo = global_own * 0.5 # Casual accounts inflate low-tier fringe players
+                top_10k_eo = global_own * 0.5 
             else:
                 top_10k_eo = global_own
-
-        # --- NEW: Price Volatility Prediction ---
+                
         transfers_in = int(row.get('transfers_in_event', 0) or 0)
         transfers_out = int(row.get('transfers_out_event', 0) or 0)
         net_transfers = transfers_in - transfers_out
@@ -204,7 +250,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "team": row.get('team_code', 'UNK'),
             "pos_id": int(row.get('element_type', 3)),
             "cost": cost_float,
-            "predicted_price_delta": predicted_delta, # --- NEW INJECTION ---
+            "predicted_price_delta": predicted_delta, 
             "own": global_own,
             "top_10k_eo": round(top_10k_eo, 2),
             "status": str(row.get('status', 'a')),
@@ -222,24 +268,33 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         original_xmins = estimate_xmins(player_obj)
         calculated_ev = get_ensemble_ev(player_obj)
         
-        # Dynamic xMins Mathematical Scaling
+        # --- NEW: Three-Tier xMins Hierarchy & Mathematical EV Scaling ---
+        # 1. Base Heuristic
+        final_xmins = original_xmins
+        
+        # 2. Crowdsourced Anchor
+        if web_name in crowd_xmins_dict:
+            final_xmins = crowd_xmins_dict[web_name]
+            
+        # 3. Human-In-The-Loop Override (Highest Priority)
         if web_name in custom_xmins_dict:
-            xmins = float(custom_xmins_dict[web_name])
+            final_xmins = float(custom_xmins_dict[web_name])
+
+        # Execute Mathematical EV Scaling if xMins shifted from the baseline heuristic
+        if final_xmins != original_xmins:
             if original_xmins > 0:
-                calculated_ev = calculated_ev * (xmins / original_xmins)
+                calculated_ev = calculated_ev * (final_xmins / original_xmins)
             else:
-                calculated_ev = (combined_xgi * (xmins / 90.0)) + (2.0 * (xmins / 90.0))
-        else:
-            xmins = original_xmins
+                calculated_ev = (combined_xgi * (final_xmins / 90.0)) + (2.0 * (final_xmins / 90.0))
         
         projections[pid] = {
-            "ml_xmins": round(xmins, 1),
+            "ml_xmins": round(final_xmins, 1),
             "ml_ev_1gw": round(calculated_ev, 2),
             "ml_ev_8gw": round(calculated_ev * 8 * 0.95, 2),
             "mc_floor_ev": round(calculated_ev * 0.6, 2),    
             "mc_ceiling_ev": round(calculated_ev * 1.5, 2),  
             "top_10k_eo": round(top_10k_eo, 2),               
-            "predicted_price_delta": predicted_delta         # Export to MILP solver
+            "predicted_price_delta": predicted_delta         
         }
         
     logger.info(f"Successfully generated projections for {len(projections)} players using rich math engine.")
