@@ -80,3 +80,43 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
     except Exception as e:
         logger.error(f"Error fetching FBref data: {e}")
         return pd.DataFrame()
+
+def get_team_matchup_ratings(fbref_df: pd.DataFrame) -> dict:
+    """
+    Aggregates FBref team data to generate dynamic Attack and Defense multipliers.
+    A defense rating > 1.0 means the opponent concedes more xG than average (easier fixture).
+    """
+    logger.info("Calculating dynamic team matchup modifiers...")
+    if fbref_df.empty or 'team' not in fbref_df.columns:
+        return {}
+        
+    # Aggregate team totals
+    team_stats = fbref_df.groupby('team', as_index=False).agg({
+        'fbref_xg': 'sum',
+        'fbref_xag': 'sum',
+        'minutes_played': 'sum'
+    })
+    
+    # Calculate league averages per 90
+    total_mins = team_stats['minutes_played'].sum()
+    if total_mins == 0:
+        return {}
+        
+    avg_xg_90 = (team_stats['fbref_xg'].sum() / total_mins) * 90.0
+    
+    ratings = {}
+    for _, row in team_stats.iterrows():
+        team_name = str(row['team'])
+        mins = float(row['minutes_played'])
+        if mins > 270.0:
+            team_xg_90 = (float(row['fbref_xg']) / mins) * 90.0
+            # Multiplier centered around 1.0
+            attack_rating = team_xg_90 / avg_xg_90 if avg_xg_90 > 0 else 1.0
+        else:
+            attack_rating = 1.0
+            
+        ratings[team_name] = {
+            "attack_rating": round(attack_rating, 2)
+        }
+        
+    return ratings

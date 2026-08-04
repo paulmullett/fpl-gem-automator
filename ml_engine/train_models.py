@@ -219,6 +219,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         else:
             combined_xgi = native_xgi
 
+        opponent_def_rating = row.get('opponent_def_rating', 1.0) 
+        combined_xgi = combined_xgi * opponent_def_rating
+
         global_own = float(row.get('selected_by_percent', 0.0) or 0.0)
         cost_float = float(row.get('now_cost', 40)) / 10.0
         
