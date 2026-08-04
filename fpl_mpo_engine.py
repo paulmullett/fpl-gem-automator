@@ -50,6 +50,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     trans_in = pulp.LpVariable.dicts("trans_in", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     trans_out = pulp.LpVariable.dicts("trans_out", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
 
+    # --- NEW: Same-Team Goalkeeper Coupling Variables ---
+    gk_by_team = {}
+    for pid in valid_pids:
+        if players[pid]["pos_id"] == 1:
+            t_id = players[pid].get("team_id")
+            if t_id:
+                if t_id not in gk_by_team: gk_by_team[t_id] = []
+                gk_by_team[t_id].append(pid)
+                
+    gk_pair = pulp.LpVariable.dicts("gk_pair", 
+                ((t_id, t) for t_id in gk_by_team for t in range(horizons)), 
+                cat="Binary")
+
     discount_factor = 0.85
     objective_terms = []
     w_bench = 0.05  # Bench EV weighted at 5% auto-sub probability
@@ -115,6 +128,31 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # Total Financial Budget
         prob += pulp.lpSum(players[pid]["cost"] * x[pid, t] for pid in valid_pids) <= total_liquid_budget
 
+        # --- NEW: Same-Team Goalkeeper Handshake Constraints ---
+        for t_id, gks in gk_by_team.items():
+            if len(gks) >= 2:
+                # Sort by GW1 EV to identify the starter vs the £4.0m backup
+                gks_sorted = sorted(gks, key=lambda p: ev_matrix[p][0], reverse=True)
+                starter_id = gks_sorted[0]
+                backup_id = gks_sorted[1]
+                
+                # gk_pair[t_id, t] can only equal 1 if BOTH x variables are 1
+                prob += gk_pair[t_id, t] <= x[starter_id, t]
+                prob += gk_pair[t_id, t] <= x[backup_id, t]
+                prob += gk_pair[t_id, t] >= x[starter_id, t] + x[backup_id, t] - 1
+                
+                # Calculate the exact EV unlocked by the backup securing the starter's missing minutes
+                t_weight = discount_factor ** t
+                starter_xmins = players[starter_id].get("xmins", 90.0)
+                missing_xmins_factor = max(0.0, 90.0 - starter_xmins) / 90.0
+                
+                # Extract the 90-minute EV ceiling for the backup
+                backup_current_xmins = max(0.01, players[backup_id].get("xmins", 0.01))
+                backup_full_ev = (ev_matrix[backup_id][t] / (backup_current_xmins / 90.0))
+                
+                handshake_bonus = backup_full_ev * missing_xmins_factor * t_weight
+                objective_terms.append(handshake_bonus * gk_pair[t_id, t])
+
         # Squad continuity
         for pid in valid_pids:
             if t == 0:
@@ -126,7 +164,12 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
 
-    prob.solve(pulp.PULP_CBC_CMD(msg=False))
+    # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
+    try:
+        prob.solve(pulp.HiGHS_CMD(msg=False))
+    except (pulp.Apis.core.PulpSolverError, AttributeError):
+        logger.warning("HiGHS solver not available in environment, falling back to CBC.")
+        prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     optimal_squad = []
     transfer_plan = []
