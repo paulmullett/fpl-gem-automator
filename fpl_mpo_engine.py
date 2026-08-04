@@ -95,40 +95,28 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     discount_factor = 0.85
     objective_terms = []
 
-    for t in range(horizons):
-        t_weight = discount_factor ** t
-        cap_mult = 2.0 if (t == 0 and active_chip == "TRIPLE_CAPTAIN") else 1.0
+    # --- NEW: Store adjusted EVs to prevent bench tax-evasion ---
+        adjusted_evs = {}
 
         for pid in valid_pids:
             p = players[pid]
             base_ev = ev_matrix[pid][t]
             
-            # --- NEW: Optimization & Game Theory Gating (Variance & EO) ---
-            # 1. Extract Stochastic Variance (Default to base_ev if Monte Carlo data is missing)
+            # Optimization & Game Theory Gating (Variance & EO)
             floor_ev = p.get("mc_floor_ev", base_ev * 0.8) 
             ceiling_ev = p.get("mc_ceiling_ev", base_ev * 1.2)
-            
-            # 2. Extract Effective Ownership (Prefer Top 10k EO, fallback to global ownership)
             eo = p.get("top_10k_eo", p.get("own", 0.0))
             
             if risk_posture == "SHIELD":
-                # Goal: Match the elite template and minimize downside risk.
-                # Use the player's 10th percentile floor, and penalize low-owned differentials.
-                # A player with 150% EO retains their full floor. A player with 5% EO gets heavily taxed.
                 eo_shield_multiplier = min(1.0, 0.7 + (eo / 100.0) * 0.3)
                 base_ev = floor_ev * eo_shield_multiplier
                 
             elif risk_posture == "CHASE":
-                # Goal: Break the template to catch up. 
-                # Use the player's 90th percentile ceiling, and penalize highly-owned template players.
-                # A player with 5% EO retains their full ceiling. A player with 150% EO gets crushed.
                 eo_chase_tax = max(0.6, 1.0 - (eo / 200.0))
                 base_ev = ceiling_ev * eo_chase_tax
 
-            # elif risk_posture == "CHASE":
-                # Alternative pure variance hunt: No ownership penalty, just maximum stochastic ceilings
-                # base_ev = ceiling_ev
-            
+            adjusted_evs[pid] = base_ev
+
             # Co-optimize Starting XI EV + Captain 2x Multiplier + Bench EV
             objective_terms.append(t_weight * base_ev * s[pid, t])
             objective_terms.append(t_weight * base_ev * cap_mult * c[pid, t])
@@ -179,24 +167,20 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # --- NEW: Same-Team Goalkeeper Handshake Constraints ---
         for t_id, gks in gk_by_team.items():
             if len(gks) >= 2:
-                # Sort by GW1 EV to identify the starter vs the £4.0m backup
-                gks_sorted = sorted(gks, key=lambda p: ev_matrix[p][0], reverse=True)
+                # Sort using the adjusted game-theory EV, not the raw matrix
+                gks_sorted = sorted(gks, key=lambda p: adjusted_evs[p], reverse=True)
                 starter_id = gks_sorted[0]
                 backup_id = gks_sorted[1]
                 
-                # gk_pair[t_id, t] can only equal 1 if BOTH x variables are 1
                 prob += gk_pair[t_id, t] <= x[starter_id, t]
                 prob += gk_pair[t_id, t] <= x[backup_id, t]
                 prob += gk_pair[t_id, t] >= x[starter_id, t] + x[backup_id, t] - 1
                 
-                # Calculate the exact EV unlocked by the backup securing the starter's missing minutes
-                t_weight = discount_factor ** t
                 starter_xmins = players[starter_id].get("xmins", 90.0)
                 missing_xmins_factor = max(0.0, 90.0 - starter_xmins) / 90.0
                 
-                # Extract the 90-minute EV ceiling for the backup
                 backup_current_xmins = max(0.01, players[backup_id].get("xmins", 0.01))
-                backup_full_ev = (ev_matrix[backup_id][t] / (backup_current_xmins / 90.0))
+                backup_full_ev = (adjusted_evs[backup_id] / (backup_current_xmins / 90.0))
                 
                 handshake_bonus = backup_full_ev * missing_xmins_factor * t_weight
                 objective_terms.append(handshake_bonus * gk_pair[t_id, t])
