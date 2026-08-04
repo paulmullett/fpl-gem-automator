@@ -171,6 +171,24 @@ def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
         
     return crowd_xmins
 
+def get_upcoming_opponent_mapping(current_gw: int) -> dict:
+    """Fetches upcoming fixtures and returns a mapping of team_id -> opponent_team_id."""
+    opp_map = {}
+    try:
+        url = f"https://fantasy.premierleague.com/api/fixtures/?event={current_gw}"
+        response = requests.get(url, timeout=10)
+        if response.status_code == 200:
+            fixtures = response.json()
+            for f in fixtures:
+                h_team = f.get('team_h')
+                a_team = f.get('team_a')
+                if h_team and a_team:
+                    opp_map[h_team] = a_team
+                    opp_map[a_team] = h_team
+    except Exception as e:
+        logger.warning(f"Could not fetch upcoming fixture mapping: {e}")
+    return opp_map
+
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     logger.info("Aligning FPL and FBref datasets...")
     
@@ -203,6 +221,29 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         df = fpl_df.copy()
 
     projections = {}
+
+    # --- NEW: Wire Dynamic Matchup Ratings ---
+    from ml_engine.data_ingestion import get_team_matchup_ratings
+    
+    team_ratings = get_team_matchup_ratings(fbref_df)
+    opp_mapping = get_upcoming_opponent_mapping(current_gw=1) # Target current GW
+    
+    # Map team names/IDs from bootstrap
+    bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
+    teams_by_id = {t['id']: t['name'] for t in bootstrap.get('teams', [])}
+    
+    # Calculate per-player opponent defensive rating
+    def calculate_player_opp_rating(row):
+        player_team_id = row.get('team_code') or row.get('team')
+        opp_id = opp_mapping.get(player_team_id)
+        if opp_id and opp_id in teams_by_id:
+            opp_name = teams_by_id[opp_id]
+            # Fetch opponent's defensive rating (default to 1.0 if unavailable)
+            return team_ratings.get(opp_name, {}).get('attack_rating', 1.0)
+        return 1.0
+
+    df['opponent_def_rating'] = df.apply(calculate_player_opp_rating, axis=1)
+
     for _, row in df.iterrows():
         pid = str(row['id'])
         web_name = row.get('web_name', 'Unknown')
