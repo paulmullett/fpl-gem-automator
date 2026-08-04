@@ -49,14 +49,13 @@ def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "Championship")
             url = f"https://fbref.com/en/comps/10/{s_yr}/stats/{s_yr}-Championship-Stats"
 
             if "Championship" in league:
-            # soccerdata hardcodes Tier-1 leagues and rejects the Championship.
-            # We bypass it here by natively scraping the FBref historical URL.
-            logger.info("Bypassing soccerdata to scrape Championship data natively...")
+              # soccerdata hardcodes Tier-1 leagues and rejects the Championship.
+              # We bypass it here by natively scraping the FBref historical URL.
+              logger.info("Bypassing soccerdata to scrape Championship data natively...")
             
-            # Direct URL for the current Championship player stats
-            url = "https://fbref.com/en/comps/10/stats/Championship-Stats"
-            
-                
+              # Direct URL for the current Championship player stats
+              url = "https://fbref.com/en/comps/10/stats/Championship-Stats"
+
             try:
                 # FBref strictly requires 'sec-ch-ua' and realistic browser headers to bypass 403 blocks
                 headers = {
