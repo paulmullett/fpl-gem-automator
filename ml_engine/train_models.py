@@ -112,12 +112,8 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     for _, row in df.iterrows():
         pid = str(row['id'])
         
-        # --- NEW: Tier-2 Step-Up Tax Adjustment ---
-        source_league = row.get('source_league', 'Premier_League')
-        step_up_multiplier = 0.70 if source_league == 'Championship' else 1.0
-
-        fb_xg = (float(row.get('fbref_xg', 0.0)) if pd.notna(row.get('fbref_xg')) else 0.0) * step_up_multiplier
-        fb_xag = (float(row.get('fbref_xag', 0.0)) if pd.notna(row.get('fbref_xag')) else 0.0) * step_up_multiplier
+        fb_xg = float(row.get('fbref_xg', 0.0)) if pd.notna(row.get('fbref_xg')) else 0.0
+        fb_xag = float(row.get('fbref_xag', 0.0)) if pd.notna(row.get('fbref_xag')) else 0.0
         fb_mins = float(row.get('minutes_played', 0.0)) if pd.notna(row.get('minutes_played')) else 0.0
         
         native_xgi = float(row.get('expected_goal_involvements_per_90', 0.0) or 0.0)
@@ -141,7 +137,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "xgi_90": combined_xgi,
             "xgc_90": float(row.get('expected_goals_conceded_per_90', 1.35) or 1.35),
             "chance_of_playing_next_round": row.get('chance_of_playing_next_round'),
-            "source_league": row.get('source_league', 'Premier_League'),
             "age": int(row.get('age', 25) or 25),
             "has_stale_pl_history": bool(row.get('has_stale_pl_history', False)),
             "recent_european_peak": bool(row.get('recent_european_peak', False)),
