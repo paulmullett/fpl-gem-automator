@@ -357,9 +357,9 @@
         "ml_variance_ceiling": 1.64
     },
     "53": {
-        "ml_xmins": 86.2,
+        "ml_xmins": 86.1,
         "ml_ev_1gw": 3.56,
-        "ml_ev_8gw": 27.08,
+        "ml_ev_8gw": 27.07,
         "ml_variance_floor": 2.14,
         "ml_variance_ceiling": 5.34
     },
@@ -706,13 +706,6 @@
         "ml_variance_floor": 0.0,
         "ml_variance_ceiling": 0.0
     },
-    "101": {
-        "ml_xmins": 0.0,
-        "ml_ev_1gw": 0.0,
-        "ml_ev_8gw": 0.0,
-        "ml_variance_floor": 0.0,
-        "ml_variance_ceiling": 0.0
-    },
     "102": {
         "ml_xmins": 75.0,
         "ml_ev_1gw": 3.24,
@@ -861,9 +854,9 @@
         "ml_variance_ceiling": 5.25
     },
     "124": {
-        "ml_xmins": 86.1,
+        "ml_xmins": 86.2,
         "ml_ev_1gw": 3.56,
-        "ml_ev_8gw": 27.05,
+        "ml_ev_8gw": 27.06,
         "ml_variance_floor": 2.14,
         "ml_variance_ceiling": 5.34
     },
@@ -985,6 +978,13 @@
         "ml_ev_8gw": 32.96,
         "ml_variance_floor": 2.6,
         "ml_variance_ceiling": 6.51
+    },
+    "101": {
+        "ml_xmins": 0.0,
+        "ml_ev_1gw": 0.0,
+        "ml_ev_8gw": 0.0,
+        "ml_variance_floor": 0.0,
+        "ml_variance_ceiling": 0.0
     },
     "136": {
         "ml_xmins": 75.0,
@@ -1216,6 +1216,13 @@
         "ml_ev_8gw": 0.0,
         "ml_variance_floor": 0.0,
         "ml_variance_ceiling": 0.0
+    },
+    "568": {
+        "ml_xmins": 75.0,
+        "ml_ev_1gw": 3.28,
+        "ml_ev_8gw": 24.94,
+        "ml_variance_floor": 1.97,
+        "ml_variance_ceiling": 4.92
     },
     "104": {
         "ml_xmins": 6.9,
@@ -1799,11 +1806,11 @@
         "ml_variance_ceiling": 0.0
     },
     "254": {
-        "ml_xmins": 60.6,
-        "ml_ev_1gw": 2.67,
-        "ml_ev_8gw": 20.25,
-        "ml_variance_floor": 1.6,
-        "ml_variance_ceiling": 4.0
+        "ml_xmins": 60.1,
+        "ml_ev_1gw": 2.62,
+        "ml_ev_8gw": 19.93,
+        "ml_variance_floor": 1.57,
+        "ml_variance_ceiling": 3.93
     },
     "255": {
         "ml_xmins": 23.4,
@@ -2548,9 +2555,9 @@
         "ml_variance_ceiling": 2.51
     },
     "358": {
-        "ml_xmins": 84.5,
+        "ml_xmins": 84.3,
         "ml_ev_1gw": 3.83,
-        "ml_ev_8gw": 29.14,
+        "ml_ev_8gw": 29.15,
         "ml_variance_floor": 2.3,
         "ml_variance_ceiling": 5.75
     },
