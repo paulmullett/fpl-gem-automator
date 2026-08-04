@@ -81,44 +81,44 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
         logger.error(f"Error fetching FBref data: {e}")
         return pd.DataFrame()
 
-def get_team_matchup_ratings(fbref_df: pd.DataFrame) -> dict:
+def get_team_matchup_ratings(fbref_df: pd.DataFrame, fpl_df: pd.DataFrame = None) -> dict:
     """
-    Aggregates FBref team stats to generate dynamic matchup multipliers.
-    - def_rating > 1.0: Opponent concedes more xG than average (easier fixture for attackers).
-    - attack_rating > 1.0: Opponent generates more xG than average (tougher fixture for defenders).
+    Generates dynamic opponent defensive frailty multipliers.
+    Rating > 1.0: Opponent concedes more xG than average (easier fixture for attackers).
+    Rating < 1.0: Opponent concedes less xG than average (tougher fixture for attackers).
     """
     logger.info("Calculating dynamic team matchup modifiers...")
-    if fbref_df.empty or 'team' not in fbref_df.columns:
-        return {}
-        
-    team_stats = fbref_df.groupby('team', as_index=False).agg({
-        'fbref_xg': 'sum',
-        'fbref_xag': 'sum',
-        'minutes_played': 'sum'
-    })
-    
-    total_mins = team_stats['minutes_played'].sum()
-    if total_mins == 0:
-        return {}
-        
-    avg_xg_90 = (team_stats['fbref_xg'].sum() / total_mins) * 90.0
-    
     ratings = {}
-    for _, row in team_stats.iterrows():
-        team_name = str(row['team']).strip()
-        mins = float(row['minutes_played'])
-        if mins > 270.0:
-            team_xg_90 = (float(row['fbref_xg']) / mins) * 90.0
-            attack_rating = team_xg_90 / avg_xg_90 if avg_xg_90 > 0 else 1.0
-            # Defensive frailty proxy: Inverse of opponent defensive strength
-            def_rating = 1.0 / max(0.5, attack_rating) 
-        else:
-            attack_rating = 1.0
-            def_rating = 1.0
-            
-        ratings[team_name] = {
-            "attack_rating": round(attack_rating, 2),
-            "def_rating": round(def_rating, 2)
-        }
+    
+    # 1. Primary Route: Calculate from FBref underlying data
+    if not fbref_df.empty and 'team' in fbref_df.columns:
+        team_stats = fbref_df.groupby('team', as_index=False).agg({
+            'fbref_xg': 'sum',
+            'minutes_played': 'sum'
+        })
+        total_mins = team_stats['minutes_played'].sum()
+        if total_mins > 0:
+            avg_xg_90 = (team_stats['fbref_xg'].sum() / total_mins) * 90.0
+            for _, row in team_stats.iterrows():
+                team_name = str(row['team']).strip()
+                mins = float(row['minutes_played'])
+                if mins > 270.0:
+                    team_xg_90 = (float(row['fbref_xg']) / mins) * 90.0
+                    attack_rating = team_xg_90 / avg_xg_90 if avg_xg_90 > 0 else 1.0
+                    def_rating = 1.0 / max(0.5, attack_rating)
+                else:
+                    def_rating = 1.0
+                ratings[team_name] = round(def_rating, 2)
+            return ratings
+
+    # 2. Pre-Season Fallback: Calculate from FPL API native expected goals conceded (xgc_90)
+    if fpl_df is not None and not fpl_df.empty:
+        logger.info("FBref empty/pre-season. Calculating matchup ratings from FPL native team xGC...")
+        fpl_df['xgc_90_num'] = pd.to_numeric(fpl_df.get('expected_goals_conceded_per_90'), errors='coerce').fillna(1.35)
+        team_xgc = fpl_df.groupby('team_code')['xgc_90_num'].mean()
+        league_avg_xgc = team_xgc.mean() if len(team_xgc) > 0 else 1.35
         
+        for team_code, xgc_val in team_xgc.items():
+            ratings[str(team_code)] = round(xgc_val / league_avg_xgc, 2) if league_avg_xgc > 0 else 1.0
+
     return ratings
