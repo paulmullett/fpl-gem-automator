@@ -5,6 +5,7 @@ import logging
 import pandas as pd
 import requests
 import soccerdata as sd
+import io  # NEW: Required for parsing native HTML tables
 
 logger = logging.getLogger(__name__)
 
@@ -38,49 +39,89 @@ def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "Championship")
         leagues = [leagues]
 
     for league in leagues:
-        try:
-            logger.info(f"Scraping FBref for league: {league}...")
-            fbref = sd.FBref(leagues=league, seasons=seasons)
-            stats_df = fbref.read_player_season_stats(stat_type="standard")
-            if stats_df.empty:
+        if "Championship" in league:
+            # soccerdata hardcodes Tier-1 leagues and rejects the Championship.
+            # We bypass it here by natively scraping the FBref historical URL.
+            logger.info("Bypassing soccerdata to scrape Championship data natively...")
+            
+            # Convert "2526" to "2025-2026" for the URL path
+            s_yr = f"20{seasons[:2]}-20{seasons[2:]}"
+            url = f"https://fbref.com/en/comps/10/{s_yr}/stats/{s_yr}-Championship-Stats"
+            
+            try:
+                # Use a realistic User-Agent to bypass Sports Reference's basic bot protection
+                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+                response = requests.get(url, headers=headers, timeout=15)
+                response.raise_for_status()
+                
+                # FBref optimizes page loads by hiding secondary tables inside HTML comments.
+                # We strip the comments so pandas can parse the DOM correctly.
+                html_content = response.text.replace('<!--', '').replace('-->', '')
+                
+                # Extract the "Standard Stats" table
+                tables = pd.read_html(io.StringIO(html_content), match="Standard Stats")
+                if not tables:
+                    raise ValueError("Could not locate Standard Stats table in HTML.")
+                    
+                stats_df = tables[0]
+                
+                # FBref uses multi-level headers (e.g., "Expected" -> "xG"). We flatten them.
+                if isinstance(stats_df.columns, pd.MultiIndex):
+                    stats_df.columns = ['_'.join(str(c) for c in col).strip() for col in stats_df.columns.values]
+                    
+            except Exception as e:
+                logger.error(f"Error fetching Championship data natively: {e}")
                 continue
-            stats_df = stats_df.reset_index()
-            
-            clean_df = pd.DataFrame()
-            str_columns = [str(c).lower() for c in stats_df.columns]
-            
-            for orig_col, str_col in zip(stats_df.columns, str_columns):
-                if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
-                    clean_df['name'] = stats_df[orig_col]
-                elif ('squad' in str_col or 'team' in str_col) and 'team' not in clean_df:
-                    clean_df['team'] = stats_df[orig_col]
-                elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
-                    clean_df['minutes_played'] = stats_df[orig_col]
-                elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
-                    clean_df['fbref_npxg'] = stats_df[orig_col]
-                elif 'xag' in str_col and '90' not in str_col and 'fbref_xag' not in clean_df:
-                    clean_df['fbref_xag'] = stats_df[orig_col]
-                elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
-                    clean_df['fbref_xg'] = stats_df[orig_col]
+                
+        else:
+            try:
+                logger.info(f"Scraping FBref via soccerdata for league: {league}...")
+                fbref = sd.FBref(leagues=league, seasons=seasons)
+                stats_df = fbref.read_player_season_stats(stat_type="standard")
+                if stats_df.empty:
+                    continue
+                stats_df = stats_df.reset_index()
+            except Exception as e:
+                logger.error(f"Error fetching FBref data for {league}: {e}")
+                continue
 
-            # Tag source league context
-            clean_df['source_league'] = "Championship" if "Championship" in league else "Premier_League"
+        # Common Parsing Logic for BOTH soccerdata and native pandas tables
+        clean_df = pd.DataFrame()
+        str_columns = [str(c).lower() for c in stats_df.columns]
+        
+        for orig_col, str_col in zip(stats_df.columns, str_columns):
+            if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
+                clean_df['name'] = stats_df[orig_col]
+            elif ('squad' in str_col or 'team' in str_col) and 'team' not in clean_df:
+                clean_df['team'] = stats_df[orig_col]
+            elif 'min' in str_col and '90' not in str_col and 'minutes_played' not in clean_df:
+                clean_df['minutes_played'] = stats_df[orig_col]
+            elif 'npxg' in str_col and '90' not in str_col and 'fbref_npxg' not in clean_df:
+                clean_df['fbref_npxg'] = stats_df[orig_col]
+            elif 'xag' in str_col and '90' not in str_col and 'fbref_xag' not in clean_df:
+                clean_df['fbref_xag'] = stats_df[orig_col]
+            elif 'xg' in str_col and 'npxg' not in str_col and '90' not in str_col and 'fbref_xg' not in clean_df:
+                clean_df['fbref_xg'] = stats_df[orig_col]
 
-            # Failsafes
-            for col in ['name', 'team', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag', 'source_league']:
-                if col not in clean_df:
-                    clean_df[col] = 0.0 if col not in ['name', 'team', 'source_league'] else "Unknown"
+        # Tag source league context
+        clean_df['source_league'] = "Championship" if "Championship" in league else "Premier_League"
+
+        # Failsafes
+        for col in ['name', 'team', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag', 'source_league']:
+            if col not in clean_df:
+                clean_df[col] = 0.0 if col not in ['name', 'team', 'source_league'] else "Unknown"
+        
+        clean_df['name'] = clean_df['name'].astype(str)
+        clean_df['team'] = clean_df['team'].astype(str)
+        
+        numeric_cols = ['minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']
+        for col in numeric_cols:
+            clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
             
-            clean_df['name'] = clean_df['name'].astype(str)
-            clean_df['team'] = clean_df['team'].astype(str)
+        # Drop summary rows (native FBref tables often include a "Squad Total" row at the bottom)
+        clean_df = clean_df[~clean_df['name'].str.contains('Total|Opponent', case=False, na=False)]
             
-            numeric_cols = ['minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag']
-            for col in numeric_cols:
-                clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
-            
-            all_dfs.append(clean_df)
-        except Exception as e:
-            logger.error(f"Error fetching FBref data for {league}: {e}")
+        all_dfs.append(clean_df)
 
     if not all_dfs:
         return pd.DataFrame()
@@ -97,5 +138,5 @@ def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "Championship")
         'source_league': 'first'
     })
 
-    logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively (including EFL Championship).")
+    logger.info(f"Successfully scraped {len(grouped_df)} global player records from FBref natively (including Championship).")
     return grouped_df
