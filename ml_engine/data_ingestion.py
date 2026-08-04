@@ -29,7 +29,7 @@ def fetch_fpl_data() -> pd.DataFrame:
         logger.error(f"Failed to fetch FPL API data: {e}")
         return pd.DataFrame()
 
-def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "ENG-Championship"), seasons="2526") -> pd.DataFrame:
+def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "Championship"), seasons="2526") -> pd.DataFrame:
     logger.info(f"Fetching FBref underlying stats for {leagues} (Season {seasons})...")
     all_dfs = []
     
@@ -64,7 +64,7 @@ def fetch_fbref_data(leagues=("Big 5 European Leagues Combined", "ENG-Championsh
                     clean_df['fbref_xg'] = stats_df[orig_col]
 
             # Tag source league context
-            clean_df['source_league'] = "ENG-Championship" if "ENG-Championship" in league else "Premier_League"
+            clean_df['source_league'] = "Championship" if "Championship" in league else "Premier_League"
 
             # Failsafes
             for col in ['name', 'team', 'minutes_played', 'fbref_xg', 'fbref_npxg', 'fbref_xag', 'source_league']:
