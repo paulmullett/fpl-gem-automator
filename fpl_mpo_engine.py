@@ -164,11 +164,11 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
 
-    # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
+   # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
     try:
         prob.solve(pulp.HiGHS_CMD(msg=False))
-    except (pulp.Apis.core.PulpSolverError, AttributeError):
-        logger.warning("HiGHS solver not available in environment, falling back to CBC.")
+    except Exception as e:
+        print(f"HiGHS solver not available ({e}), falling back to CBC.")
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     optimal_squad = []
