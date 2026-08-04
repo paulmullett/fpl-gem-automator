@@ -368,7 +368,7 @@ def get_fpl_data():
         if RISK_POSTURE == "SHIELD": base_ev -= (sigma * 0.15)
         elif RISK_POSTURE == "CHASE": base_ev += (sigma * 0.15)
             
-        for t in range(1, 8):
+        for t in range(0, 8):
             gw_opponents = team_gw_opponents[t_id][t]
             if not gw_opponents:
                 ev_matrix[pid][t] = 0.0
