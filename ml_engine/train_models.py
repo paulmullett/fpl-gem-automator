@@ -290,25 +290,37 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         return 1.0
 
     df['opponent_def_rating'] = df['team'].apply(resolve_opp_rating)
-    df['cost_float'] = pd.to_numeric(df.get('now_cost', 40), errors='coerce').fillna(40) / 10.0
-    df['global_own'] = pd.to_numeric(df.get('selected_by_percent', 0.0), errors='coerce').fillna(0.0)
-    df['fb_mins'] = pd.to_numeric(df.get('minutes_played', 0.0), errors='coerce').fillna(0.0)
-    df['age_num'] = pd.to_numeric(df.get('age', 25), errors='coerce').fillna(25)
-    df['xgc_90_num'] = pd.to_numeric(df.get('expected_goals_conceded_per_90', 1.35), errors='coerce').fillna(1.35)
-    df['ep_next_raw'] = df.get('ep_next', 0.0)
-    df['form_raw'] = df.get('form', 0.0)
+
+    # Safely convert columns with conditional fallback checks
+    df['cost_float'] = (pd.to_numeric(df['now_cost'], errors='coerce').fillna(40) if 'now_cost' in df.columns else 40) / 10.0
+    df['global_own'] = pd.to_numeric(df['selected_by_percent'], errors='coerce').fillna(0.0) if 'selected_by_percent' in df.columns else 0.0
+    df['fb_mins'] = pd.to_numeric(df['minutes_played'], errors='coerce').fillna(0.0) if 'minutes_played' in df.columns else 0.0
+    df['age_num'] = pd.to_numeric(df['age'], errors='coerce').fillna(25) if 'age' in df.columns else 25.0
+    df['xgc_90_num'] = pd.to_numeric(df['expected_goals_conceded_per_90'], errors='coerce').fillna(1.35) if 'expected_goals_conceded_per_90' in df.columns else 1.35
+    df['ep_next_raw'] = pd.to_numeric(df['ep_next'], errors='coerce').fillna(0.0) if 'ep_next' in df.columns else 0.0
+    df['form_raw'] = pd.to_numeric(df['form'], errors='coerce').fillna(0.0) if 'form' in df.columns else 0.0
 
     # Calculate native DEFCON metrics for the ML Matrix
-    df['fpl_mins_played'] = pd.to_numeric(df.get('minutes', 0.0), errors='coerce').clip(lower=0.001)
-    df['fpl_cbit'] = df[['clearances', 'blocks', 'interceptions', 'tackles']].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
-    df['fpl_cbirt'] = df['fpl_cbit'] + pd.to_numeric(df.get('recoveries', 0), errors='coerce').fillna(0)
+    df['fpl_mins_played'] = (pd.to_numeric(df['minutes'], errors='coerce').fillna(0.0) if 'minutes' in df.columns else pd.Series(0.0, index=df.index)).clip(lower=0.001)
+    
+    cbit_cols = [c for c in ['clearances', 'blocks', 'interceptions', 'tackles'] if c in df.columns]
+    if cbit_cols:
+        df['fpl_cbit'] = df[cbit_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
+    else:
+        df['fpl_cbit'] = 0.0
+    
+    if 'recoveries' in df.columns:
+        df['fpl_cbirt'] = df['fpl_cbit'] + pd.to_numeric(df['recoveries'], errors='coerce').fillna(0)
+    else:
+        df['fpl_cbirt'] = df['fpl_cbit']
+
     df['fpl_cbit_90'] = (df['fpl_cbit'] / df['fpl_mins_played']) * 90.0
     df['fpl_cbirt_90'] = (df['fpl_cbirt'] / df['fpl_mins_played']) * 90.0
 
     # Calculate blended xGI
-    fb_xg = pd.to_numeric(df.get('fbref_xg', 0.0), errors='coerce').fillna(0.0)
-    fb_xag = pd.to_numeric(df.get('fbref_xag', 0.0), errors='coerce').fillna(0.0)
-    native_xgi = pd.to_numeric(df.get('expected_goal_involvements_per_90', 0.0), errors='coerce').fillna(0.0)
+    fb_xg = pd.to_numeric(df['fbref_xg'], errors='coerce').fillna(0.0) if 'fbref_xg' in df.columns else 0.0
+    fb_xag = pd.to_numeric(df['fbref_xag'], errors='coerce').fillna(0.0) if 'fbref_xag' in df.columns else 0.0
+    native_xgi = pd.to_numeric(df['expected_goal_involvements_per_90'], errors='coerce').fillna(0.0) if 'expected_goal_involvements_per_90' in df.columns else 0.0
     
     df['combined_xgi'] = np.where(
         df['fb_mins'] > 270.0,
