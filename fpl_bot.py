@@ -397,16 +397,22 @@ def get_fpl_data():
         pid_str = str(pid)
         if pid_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid_str] and float(ml_proj_data[pid_str]["ml_ev_1gw"]) > 0:
             base_ml_ev = float(ml_proj_data[pid_str]["ml_ev_1gw"])
-            # Re-scale EV if a Human Oracle xMins override exists for this player
+            
+            # If an explicit Human Oracle xMins override exists in fpl_bot.py, recalculate non-linearly
             if pid_str in xmins_overrides:
-                orig_xmins = float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p)))
                 target_xmins = float(xmins_overrides[pid_str])
-                heuristic_ev = base_ml_ev * (target_xmins / orig_xmins) if orig_xmins > 0 else 0.0
+                orig_xmins = float(ml_proj_data[pid_str].get("ml_xmins", 90.0))
+                
+                prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (target_xmins - 60.0)))
+                app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
+                
+                attacking_ev = max(0.0, base_ml_ev - 2.0) * (target_xmins / max(1.0, orig_xmins))
+                heuristic_ev = app_ev + attacking_ev
             else:
                 heuristic_ev = base_ml_ev
         else:
-            heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
-            
+            heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)            
+
         ev_matrix[pid][0] = heuristic_ev
         base_ev = ev_matrix[pid][0]
 

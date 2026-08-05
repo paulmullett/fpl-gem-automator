@@ -280,19 +280,19 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     crowd_xmins_dict = get_crowdsourced_xmins(fpl_df)
     
     custom_xmins_dict = {}
-    xmins_env = os.getenv("XMINS_INPUT", "")
-    if xmins_env and xmins_env.strip():
-        try:
-            custom_xmins_dict = json.loads(xmins_env.replace("'", '"'))
-        except json.JSONDecodeError:
-            for override in xmins_env.split(","):
-                if ":" in override:
-                    k, v = override.split(":")
-                    try:
-                        custom_xmins_dict[k.strip()] = float(v.strip())
-                    except ValueError: pass
-        logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides into ML Pipeline.")
-
+xmins_env = os.getenv("XMINS_INPUT", "")
+if xmins_env and xmins_env.strip():
+    try:
+        raw_dict = json.loads(xmins_env.replace("'", '"'))
+        custom_xmins_dict = {str(k).strip().lower(): float(v) for k, v in raw_dict.items()}
+    except json.JSONDecodeError:
+        for override in xmins_env.split(","):
+            if ":" in override:
+                k, v = override.split(":")
+                try:
+                    custom_xmins_dict[k.strip().lower()] = float(v.strip())
+                except ValueError: pass
+    logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides into ML Pipeline.")
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
         fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
@@ -407,8 +407,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         
         # Safely checks for the integer ID (from local CSV), falls back to web_name (from remote JSON), then to heuristics
         crowd_val = crowd_xmins_dict.get(int(row['id']), crowd_xmins_dict.get(web_name, original_xmins))
-        final_xmins = custom_xmins_dict.get(web_name, crowd_val)
-
+        final_xmins = custom_xmins_dict.get(web_name.lower(), custom_xmins_dict.get(strip_accents(web_name), crowd_val))
         # Piecewise Non-Linear EV Scaling
         # Appearance points (2.0 pts) lock in at 60+ mins via Sigmoid probability.
         # Attacking EV (xGI) scales linearly with per-90 time on pitch.
