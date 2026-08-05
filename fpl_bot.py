@@ -306,17 +306,22 @@ def get_fpl_data():
             for pid, p in players.items():
                 if p.get("name", "").lower() == name_lower:
                     xmins_overrides[str(pid)] = target_mins
-                    print(f"   -> ORACLE OVERRIDE LOCKED: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                    p["xmins"] = target_mins
+                    p["ml_xmins"] = target_mins
+                    print(f" -> ORACLE OVERRIDE LOCKED: {p['name']} ({p['team']}) set to {target_mins} mins.")
                     match_found = True
                     break
-                    
+            
             # Second Pass: Substring match if exact fails
             if not match_found:
                 for pid, p in players.items():
                     if name_lower in p.get("name", "").lower():
                         xmins_overrides[str(pid)] = target_mins
-                        print(f"   -> ORACLE FUZZY OVERRIDE: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                        p["xmins"] = target_mins
+                        p["ml_xmins"] = target_mins
+                        print(f" -> ORACLE FUZZY OVERRIDE: {p['name']} ({p['team']}) set to {target_mins} mins.")
                         break
+
         state["xmins_overrides"] = xmins_overrides
     else:
         print("No Human Oracle Input provided. Resetting state overrides to clean baseline.")

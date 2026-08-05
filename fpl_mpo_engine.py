@@ -183,10 +183,10 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 prob += gk_pair[t_id, t] <= x[backup_id, t]
                 prob += gk_pair[t_id, t] >= x[starter_id, t] + x[backup_id, t] - 1
                 
-                starter_xmins = players[starter_id].get("xmins", 90.0)
+                starter_xmins = players[starter_id].get("xmins", players[starter_id].get("ml_xmins", 90.0))
                 missing_xmins_factor = max(0.0, 90.0 - starter_xmins) / 90.0
                 
-                backup_current_xmins = max(0.01, players[backup_id].get("xmins", 0.01))
+                backup_current_xmins = max(0.01, players[backup_id].get("xmins", players[backup_id].get("ml_xmins", 0.01)))
                 backup_full_ev = (adjusted_evs[backup_id] / (backup_current_xmins / 90.0))
                 
                 handshake_bonus = backup_full_ev * missing_xmins_factor * t_weight
@@ -208,12 +208,13 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # --- UPGRADED: Smarter Sub GK Tie-Breaker ---
         # Coexists with the Handshake Bonus. If a handshake isn't used, 
         # this ensures the best independent £4.0m keeper is selected.
+        # --- UPGRADED: Smarter Sub GK Tie-Breaker ---
         for p in gk_pids:
             p_obj = players[p]
-            # Use safe estimate_xmins fallback if xmins isn't explicitly set
-            p_xmins = p_obj.get("xmins", estimate_xmins(p_obj))
+            # Check explicit xmins or ml_xmins overrides prior to falling back to heuristics
+            p_xmins = p_obj.get("xmins", p_obj.get("ml_xmins", estimate_xmins(p_obj)))
             p_ev = adjusted_evs[p]
-            
+        
             # Primary Tie-Breaker: xMins (0.001 weight) | Secondary: EV (0.0001 weight)
             sub_gk_score = (p_xmins * 0.001) + (p_ev * 0.0001)
             objective_terms.append(sub_gk_score * (x[p, t] - s[p, t]) * (discount_factor**t))
