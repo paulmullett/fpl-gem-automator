@@ -2,8 +2,8 @@ name: FPL Master Quantitative Bot
 
 on:
   schedule:
-    - cron: '0 18 * * 4'  # Thursday evenings (Pre-weekend prep)
-    - cron: '0 20 * * 0'  # Sunday evenings (Post-weekend review)
+    - cron: '0 18 * * 4' # Thursday evenings (Pre-weekend prep)
+    - cron: '0 20 * * 0' # Sunday evenings (Post-weekend review)
   workflow_dispatch:
     inputs:
       run_type:
@@ -55,6 +55,8 @@ jobs:
           venv/bin/python -m pip install -r requirements.txt
 
       - name: Run ML Data Pipeline
+        env:
+          XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
         run: venv/bin/python run_ml_pipeline.py
 
       - name: Execute MILP Solver & Discord Oracle
@@ -63,13 +65,12 @@ jobs:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           FPL_TEAM_ID: ${{ secrets.FPL_TEAM_ID }}
           ODDS_API_KEY: ${{ secrets.ODDS_API_KEY }}
-          MANUAL_TRIGGER: ${{ github.event.inputs.workflow_phase || 'auto' }}
+          MANUAL_TRIGGER: ${{ github.event.inputs.run_type || 'auto' }}
           ACTIVE_CHIP: ${{ github.event.inputs.active_chip || 'NONE' }}
-          XMINS_INPUT: ${{ github.event.inputs.xmins_overrides || '' }}
+          XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture || 'NEUTRAL' }}
-
         run: venv/bin/python fpl_bot.py
-        
+
       - name: Commit Updated State Files
         run: |
           git config --global user.name "GitHub Actions Bot"
