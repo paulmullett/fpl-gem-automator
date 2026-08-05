@@ -4,6 +4,7 @@ fpl_mpo_engine.py — Mathematical Multi-Period Optimization (MILP) Engine
 
 import pulp
 import logging
+from fpl_funcs import estimate_xmins
 
 logger = logging.getLogger(__name__)
 
@@ -204,8 +205,18 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for p in outfield_pids:
             objective_terms.append(adjusted_evs[p] * (x[p, t] - s[p, t]) * blended_bench_wt * (discount_factor**t))
 
+        # --- UPGRADED: Smarter Sub GK Tie-Breaker ---
+        # Coexists with the Handshake Bonus. If a handshake isn't used, 
+        # this ensures the best independent £4.0m keeper is selected.
         for p in gk_pids:
-            objective_terms.append(adjusted_evs[p] * (x[p, t] - s[p, t]) * 0.01 * (discount_factor**t))       
+            p_obj = players[p]
+            # Use safe estimate_xmins fallback if xmins isn't explicitly set
+            p_xmins = p_obj.get("xmins", estimate_xmins(p_obj))
+            p_ev = adjusted_evs[p]
+            
+            # Primary Tie-Breaker: xMins (0.001 weight) | Secondary: EV (0.0001 weight)
+            sub_gk_score = (p_xmins * 0.001) + (p_ev * 0.0001)
+            objective_terms.append(sub_gk_score * (x[p, t] - s[p, t]) * (discount_factor**t))
 
         # Squad continuity
         for pid in valid_pids:
