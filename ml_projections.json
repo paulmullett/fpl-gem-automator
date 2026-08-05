@@ -76,7 +76,7 @@
         "ml_ev_8gw": 22.15,
         "mc_floor_ev": 1.82,
         "mc_ceiling_ev": 4.28,
-        "top_10k_eo": 15.8,
+        "top_10k_eo": 15.9,
         "predicted_price_delta": 0.0
     },
     "9": {
@@ -255,7 +255,7 @@
         "ml_ev_1gw": 2.32,
         "ml_ev_8gw": 17.63,
         "mc_floor_ev": 1.03,
-        "mc_ceiling_ev": 3.92,
+        "mc_ceiling_ev": 3.93,
         "top_10k_eo": 2.0,
         "predicted_price_delta": 0.0
     },
@@ -543,7 +543,7 @@
         "name": "Abraham",
         "ml_xmins": 9.0,
         "ml_ev_1gw": 0.24,
-        "ml_ev_8gw": 1.81,
+        "ml_ev_8gw": 1.82,
         "mc_floor_ev": 0.05,
         "mc_ceiling_ev": 0.48,
         "top_10k_eo": 0.0,
@@ -1063,7 +1063,7 @@
         "name": "Wilson",
         "ml_xmins": 13.0,
         "ml_ev_1gw": 0.28,
-        "ml_ev_8gw": 2.16,
+        "ml_ev_8gw": 2.15,
         "mc_floor_ev": 0.06,
         "mc_ceiling_ev": 0.57,
         "top_10k_eo": 0.2,
@@ -1406,7 +1406,7 @@
         "ml_ev_8gw": 0.0,
         "mc_floor_ev": 0.0,
         "mc_ceiling_ev": 0.0,
-        "top_10k_eo": 1.4,
+        "top_10k_eo": 1.35,
         "predicted_price_delta": 0.0
     },
     "140": {
@@ -1416,7 +1416,7 @@
         "ml_ev_8gw": 28.96,
         "mc_floor_ev": 2.72,
         "mc_ceiling_ev": 5.18,
-        "top_10k_eo": 1.0,
+        "top_10k_eo": 0.95,
         "predicted_price_delta": 0.0
     },
     "141": {
@@ -2013,7 +2013,7 @@
         "name": "Markelo",
         "ml_xmins": 7.0,
         "ml_ev_1gw": 0.13,
-        "ml_ev_8gw": 0.97,
+        "ml_ev_8gw": 0.96,
         "mc_floor_ev": 0.03,
         "mc_ceiling_ev": 0.25,
         "top_10k_eo": 0.05,
@@ -2523,7 +2523,7 @@
         "name": "Beto",
         "ml_xmins": 66.0,
         "ml_ev_1gw": 1.99,
-        "ml_ev_8gw": 15.12,
+        "ml_ev_8gw": 15.13,
         "mc_floor_ev": 0.9,
         "mc_ceiling_ev": 3.35,
         "top_10k_eo": 1.6,
@@ -2751,12 +2751,12 @@
     },
     "569": {
         "name": "Garc\u00eda",
-        "ml_xmins": 44.7,
+        "ml_xmins": 44.8,
         "ml_ev_1gw": 1.2,
-        "ml_ev_8gw": 9.13,
+        "ml_ev_8gw": 9.12,
         "mc_floor_ev": 0.24,
         "mc_ceiling_ev": 2.4,
-        "top_10k_eo": 0.1,
+        "top_10k_eo": 0.15,
         "predicted_price_delta": 0.0
     },
     "570": {
@@ -3232,8 +3232,8 @@
     "316": {
         "name": "Emersonn",
         "ml_xmins": 47.0,
-        "ml_ev_1gw": 1.22,
-        "ml_ev_8gw": 9.24,
+        "ml_ev_1gw": 1.21,
+        "ml_ev_8gw": 9.23,
         "mc_floor_ev": 0.28,
         "mc_ceiling_ev": 2.38,
         "top_10k_eo": 0.15,
@@ -3756,7 +3756,7 @@
         "ml_ev_8gw": 21.13,
         "mc_floor_ev": 1.42,
         "mc_ceiling_ev": 4.48,
-        "top_10k_eo": 12.2,
+        "top_10k_eo": 12.3,
         "predicted_price_delta": 0.0
     },
     "367": {
@@ -3883,7 +3883,7 @@
         "name": "Isak",
         "ml_xmins": 76.0,
         "ml_ev_1gw": 2.97,
-        "ml_ev_8gw": 22.59,
+        "ml_ev_8gw": 22.6,
         "mc_floor_ev": 1.56,
         "mc_ceiling_ev": 4.73,
         "top_10k_eo": 11.2,
@@ -4016,7 +4016,7 @@
         "ml_ev_8gw": 23.26,
         "mc_floor_ev": 2.0,
         "mc_ceiling_ev": 4.38,
-        "top_10k_eo": 11.3,
+        "top_10k_eo": 11.4,
         "predicted_price_delta": 0.0
     },
     "392": {
@@ -4211,11 +4211,11 @@
     },
     "411": {
         "name": "Haaland",
-        "ml_xmins": 25.0,
-        "ml_ev_1gw": 1.24,
-        "ml_ev_8gw": 9.4,
-        "mc_floor_ev": 0.25,
-        "mc_ceiling_ev": 2.47,
+        "ml_xmins": 89.0,
+        "ml_ev_1gw": 4.88,
+        "ml_ev_8gw": 37.12,
+        "mc_floor_ev": 2.91,
+        "mc_ceiling_ev": 7.35,
         "top_10k_eo": 119.84,
         "predicted_price_delta": 0.0
     },
@@ -4416,7 +4416,7 @@
         "ml_ev_8gw": 19.15,
         "mc_floor_ev": 1.0,
         "mc_ceiling_ev": 4.42,
-        "top_10k_eo": 17.5,
+        "top_10k_eo": 17.6,
         "predicted_price_delta": 0.0
     },
     "428": {
@@ -5141,12 +5141,12 @@
     },
     "497": {
         "name": "Dubravka",
-        "ml_xmins": 0.0,
-        "ml_ev_1gw": 0.0,
-        "ml_ev_8gw": 0.0,
-        "mc_floor_ev": 0.0,
-        "mc_ceiling_ev": 0.0,
-        "top_10k_eo": 24.3,
+        "ml_xmins": 1.0,
+        "ml_ev_1gw": 0.02,
+        "ml_ev_8gw": 0.14,
+        "mc_floor_ev": 0.01,
+        "mc_ceiling_ev": 0.03,
+        "top_10k_eo": 24.2,
         "predicted_price_delta": 0.0
     },
     "498": {
@@ -5435,7 +5435,7 @@
         "ml_ev_1gw": 1.11,
         "ml_ev_8gw": 8.42,
         "mc_floor_ev": 0.22,
-        "mc_ceiling_ev": 2.21,
+        "mc_ceiling_ev": 2.22,
         "top_10k_eo": 0.95,
         "predicted_price_delta": 0.0
     },
