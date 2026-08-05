@@ -7,9 +7,11 @@ load_dotenv()
 import os
 import sys
 import json
+import re
 import requests
 import pulp
 import math
+
 from google import genai
 from google.genai import types
 from ddgs import DDGS
