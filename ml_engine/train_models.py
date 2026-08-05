@@ -24,6 +24,7 @@ from sklearn.model_selection import GridSearchCV
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from fpl_funcs import estimate_xmins
+from ml_engine.data_ingestion import get_team_matchup_ratings, fetch_understat_rolling_data
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +222,8 @@ def execute_tri_model_regression(df: pd.DataFrame) -> np.ndarray:
  
  features = [
  'cost_float', 'global_own', 'combined_xgi', 'xgc_90_num', 
- 'opponent_def_rating', 'fb_mins', 'fpl_cbit_90', 'fpl_cbirt_90'
+ 'opponent_def_rating', 'fb_mins', 'fpl_cbit_90', 'fpl_cbirt_90',
+ 'xg_per_shot', 'xa_per_kp'
  ]
  
  df['ml_scalar'] = 1.0 # Default fallback
@@ -301,7 +303,16 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     else:
         df = fpl_df.copy()
 
-    from ml_engine.data_ingestion import get_team_matchup_ratings
+    # --- UNDERSTAT 4-GW ROLLING DATA MERGE ---
+    understat_df = fetch_understat_rolling_data()
+    if not understat_df.empty:
+        understat_df['clean_understat_name'] = understat_df['name'].apply(strip_accents)
+        df['clean_full_name'] = (df['first_name'].astype(str) + " " + df['second_name'].astype(str)).apply(strip_accents)
+        df = pd.merge(df, understat_df, left_on='clean_full_name', right_on='clean_understat_name', how='left', suffixes=('', '_understat'))
+        
+    df['xg_per_shot'] = pd.to_numeric(df.get('xg_per_shot'), errors='coerce').fillna(0.0)
+    df['xa_per_kp'] = pd.to_numeric(df.get('xa_per_kp'), errors='coerce').fillna(0.0)
+
     team_ratings = get_team_matchup_ratings(fbref_df, fpl_df)
     opp_mapping = get_upcoming_opponent_mapping()
     

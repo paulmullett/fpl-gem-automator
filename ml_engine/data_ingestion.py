@@ -1,11 +1,12 @@
 """
 ml_engine/data_ingestion.py — Multi-Source Football Data Ingestion Engine (Team-Bounded)
 """
+
 import logging
 import pandas as pd
+import numpy as np
 import requests
 import soccerdata as sd
-
 logger = logging.getLogger(__name__)
 
 def fetch_fpl_data() -> pd.DataFrame:
@@ -79,6 +80,85 @@ def fetch_fbref_data(leagues="Big 5 European Leagues Combined", seasons="2526") 
 
     except Exception as e:
         logger.error(f"Error fetching FBref data: {e}")
+        return pd.DataFrame()
+
+def fetch_understat_rolling_data(seasons="2526") -> pd.DataFrame:
+    logger.info(f"Fetching Understat match logs for 4-GW rolling window (Season {seasons})...")
+    try:
+        # 1. Fetch match-level data for the Premier League
+        understat = sd.Understat(leagues="ENG-Premier League", seasons=seasons)
+        stats_df = understat.read_player_match_stats()
+        stats_df = stats_df.reset_index()
+        
+        clean_df = pd.DataFrame()
+        str_columns = [str(c).lower() for c in stats_df.columns]
+        
+        # 2. Safely extract core columns regardless of MultiIndex nesting
+        for orig_col, str_col in zip(stats_df.columns, str_columns):
+            if ('player' in str_col or 'name' in str_col) and 'name' not in clean_df:
+                clean_df['name'] = stats_df[orig_col]
+            elif 'game' in str_col and 'game' not in clean_df:
+                clean_df['game'] = stats_df[orig_col] # SoccerData game strings usually contain the date prefix
+            elif 'date' in str_col and 'date' not in clean_df:
+                clean_df['date'] = pd.to_datetime(stats_df[orig_col], errors='coerce')
+            elif ('xg' in str_col and 'npxg' not in str_col) and 'xg' not in clean_df:
+                clean_df['xg'] = stats_df[orig_col]
+            elif 'xa' in str_col and 'xa' not in clean_df:
+                clean_df['xa'] = stats_df[orig_col]
+            elif 'shot' in str_col and 'shots' not in clean_df:
+                clean_df['shots'] = stats_df[orig_col]
+            elif ('key' in str_col or 'kp' in str_col) and 'key_passes' not in clean_df:
+                clean_df['key_passes'] = stats_df[orig_col]
+            elif 'min' in str_col and 'minutes' not in clean_df:
+                clean_df['minutes'] = stats_df[orig_col]
+
+        # 3. Failsafes for missing data
+        for col in ['name', 'game', 'xg', 'xa', 'shots', 'key_passes', 'minutes']:
+            if col not in clean_df:
+                clean_df[col] = "Unknown" if col in ['name', 'game'] else 0.0
+                
+        # If no strict date column exists, use the 'game' string to sort chronologically
+        if 'date' not in clean_df.columns or clean_df['date'].isna().all():
+            clean_df['date'] = clean_df['game'].astype(str)
+
+        clean_df['name'] = clean_df['name'].astype(str)
+        
+        # Ensure numerical typing
+        numeric_cols = ['xg', 'xa', 'shots', 'key_passes', 'minutes']
+        for col in numeric_cols:
+            clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce').fillna(0.0)
+
+        # 4. Filter for players who actually played, sort by date, and take the last 4 appearances
+        clean_df = clean_df[clean_df['minutes'] > 0].sort_values(by=['name', 'date'])
+        rolling_df = clean_df.groupby('name').tail(4)
+        
+        # 5. Aggregate the 4-game window
+        agg_df = rolling_df.groupby('name', as_index=False).agg({
+            'minutes': 'sum',
+            'xg': 'sum',
+            'xa': 'sum',
+            'shots': 'sum',
+            'key_passes': 'sum'
+        })
+        
+        # 6. Feature Engineering: Shot quality & Chance creation quality
+        agg_df['xg_per_shot'] = np.where(agg_df['shots'] > 0, agg_df['xg'] / agg_df['shots'], 0.0)
+        agg_df['xa_per_kp'] = np.where(agg_df['key_passes'] > 0, agg_df['xa'] / agg_df['key_passes'], 0.0)
+        
+        # 7. Prefix columns to avoid namespace collisions with FBref downstream
+        agg_df = agg_df.rename(columns={
+            'minutes': 'understat_rolling_mins',
+            'xg': 'understat_rolling_xg',
+            'xa': 'understat_rolling_xa',
+            'shots': 'understat_rolling_shots',
+            'key_passes': 'understat_rolling_kp'
+        })
+
+        logger.info(f"Successfully processed 4-GW rolling Understat metrics for {len(agg_df)} players.")
+        return agg_df
+
+    except Exception as e:
+        logger.error(f"Error fetching Understat rolling data: {e}")
         return pd.DataFrame()
 
 def get_team_matchup_ratings(fbref_df: pd.DataFrame, fpl_df: pd.DataFrame = None) -> dict:
