@@ -1,5 +1,9 @@
 """
 ml_engine/train_models.py — Unified Dataset Alignment & Projections Engine
+
+Academic Attribution: 
+Features position-specific ensemble segregation and asymmetric sample weighting 
+methodologies adapted from OpenFPL (Groos, 2025, arXiv:2508.09992).
 """
 
 import os
@@ -15,8 +19,10 @@ import numpy as np
 from xgboost import XGBRegressor
 from lightgbm import LGBMRegressor
 from sklearn.ensemble import RandomForestRegressor
+from sklearn.model_selection import GridSearchCV
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+
 from fpl_funcs import estimate_xmins
 
 logger = logging.getLogger(__name__)
@@ -203,41 +209,61 @@ def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
     return opp_map
 
 def execute_tri_model_regression(df: pd.DataFrame) -> np.ndarray:
-    """
-    Trains a Tri-Model ML Regressor Suite to predict a performance adjustment 
-    scalar based on underlying metrics (CBIT, xGI, xGC, Matchup Ratings).
-    """
-    logger.info("Initializing Tri-Model Residual Regressor Suite (XGBoost, LightGBM, Random Forest)...")
-    
-    features = [
-        'cost_float', 'global_own', 'combined_xgi', 'xgc_90_num', 
-        'opponent_def_rating', 'fb_mins', 'fpl_cbit_90', 'fpl_cbirt_90'
-    ]
-    X = df[features].fillna(0.0)
-    
-    # Target (y): Multiplicative scalar around 1.0 based on form/ep relative to cost prior
-    expected_base = np.maximum(1.0, df['cost_float'] * 0.5)
-    raw_target = pd.to_numeric(df['ep_next_raw'], errors='coerce').fillna(0.0)
-    
-    # Create normalized performance ratio target
-    y = np.where(raw_target > 0, raw_target / expected_base, 1.0)
-    y = np.clip(y, 0.5, 2.0)
-    
-    xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.03, max_depth=3, random_state=42)
-    lgb_model = LGBMRegressor(n_estimators=100, learning_rate=0.03, max_depth=3, random_state=42, verbose=-1)
-    rf_model = RandomForestRegressor(n_estimators=100, max_depth=3, random_state=42)
-    
-    xgb_model.fit(X, y)
-    lgb_model.fit(X, y)
-    rf_model.fit(X, y)
-    
-    xgb_preds = xgb_model.predict(X)
-    lgb_preds = lgb_model.predict(X)
-    rf_preds = rf_model.predict(X)
-    
-    # Weighted ensemble adjustment scalar
-    ensemble_scalars = (0.4 * xgb_preds) + (0.4 * lgb_preds) + (0.2 * rf_preds)
-    return np.clip(ensemble_scalars, 0.6, 1.6)
+ """
+ Trains Position-Specific Tri-Model ML Regressor Suites with Asymmetric 
+ 'Hauler' Sample Weighting and Automated K-Best Hyperparameter Tuning.
+ """
+ logger.info("Initializing Position-Specific Tri-Model Regressor Suites...")
+ 
+ features = [
+ 'cost_float', 'global_own', 'combined_xgi', 'xgc_90_num', 
+ 'opponent_def_rating', 'fb_mins', 'fpl_cbit_90', 'fpl_cbirt_90'
+ ]
+ 
+ df['ml_scalar'] = 1.0 # Default fallback
+ 
+ # Iterate through each FPL position (1: GK, 2: DEF, 3: MID, 4: FWD)
+ for pos_id in [1, 2, 3, 4]:
+     pos_mask = pd.to_numeric(df['element_type'], errors='coerce').fillna(3) == pos_id
+     pos_df = df[pos_mask]
+     
+     if len(pos_df) < 10: # Safety net for tiny datasets (pre-season)
+         continue
+         
+     X = pos_df[features].fillna(0.0)
+     
+     expected_base = np.maximum(1.0, pos_df['cost_float'] * 0.5)
+     raw_target = pd.to_numeric(pos_df['ep_next_raw'], errors='coerce').fillna(0.0)
+     
+     y = np.where(raw_target > 0, raw_target / expected_base, 1.0)
+     y = np.clip(y, 0.5, 2.0)
+     
+     # Asymmetric Sample Weighting for "Haulers" (≥ 5 points)
+     sample_weights = np.where(raw_target >= 5.0, 2.5, 1.0)
+     
+     # Lightweight Grid Search for Hyperparameters (Prevents GitHub Action timeouts)
+     param_grid = {'max_depth': [2, 3], 'learning_rate': [0.03, 0.05]}
+     
+     xgb_base = XGBRegressor(n_estimators=50, random_state=42)
+     xgb_tuned = GridSearchCV(xgb_base, param_grid, cv=2, scoring='neg_root_mean_squared_error')
+     xgb_tuned.fit(X, y, sample_weight=sample_weights)
+     
+     lgb_base = LGBMRegressor(n_estimators=50, random_state=42, verbose=-1)
+     lgb_tuned = GridSearchCV(lgb_base, param_grid, cv=2, scoring='neg_root_mean_squared_error')
+     lgb_tuned.fit(X, y, sample_weight=sample_weights)
+     
+     rf_model = RandomForestRegressor(n_estimators=50, max_depth=xgb_tuned.best_params_['max_depth'], random_state=42)
+     rf_model.fit(X, y, sample_weight=sample_weights)
+     
+     xgb_preds = xgb_tuned.predict(X)
+     lgb_preds = lgb_tuned.predict(X)
+     rf_preds = rf_model.predict(X)
+     
+     # Weighted ensemble adjustment scalar
+     ensemble_scalars = (0.4 * xgb_preds) + (0.4 * lgb_preds) + (0.2 * rf_preds)
+     df.loc[pos_mask, 'ml_scalar'] = np.clip(ensemble_scalars, 0.6, 1.6)
+
+ return df['ml_scalar'].values
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     logger.info("Aligning FPL and FBref datasets for ML Pipeline...")
