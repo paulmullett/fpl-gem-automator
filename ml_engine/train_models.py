@@ -238,8 +238,10 @@ def execute_tri_model_regression(df: pd.DataFrame) -> np.ndarray:
      y = np.where(raw_target > 0, raw_target / expected_base, 1.0)
      y = np.clip(y, 0.5, 2.0)
      
-     # Asymmetric Sample Weighting for "Haulers" (≥ 5 points)
-     sample_weights = np.where(raw_target >= 5.0, 2.5, 1.0)
+     # Asymmetric Sample Weighting for True "Haulers" (≥ 8 points)
+     # A threshold of 5.0 over-indexed Goalkeepers/Defenders (standard clean sheets = 6 pts).
+     # 8.0 isolates true explosive upside (goals, double returns, penalty saves, max bonus).
+     sample_weights = np.where(raw_target >= 8.0, 2.5, 1.0)
      
      # Lightweight Grid Search for Hyperparameters (Prevents GitHub Action timeouts)
      param_grid = {'max_depth': [2, 3], 'learning_rate': [0.03, 0.05]}
