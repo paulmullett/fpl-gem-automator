@@ -399,7 +399,14 @@ def get_fpl_data():
         
         pid_str = str(pid)
         if pid_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid_str] and float(ml_proj_data[pid_str]["ml_ev_1gw"]) > 0:
-            heuristic_ev = float(ml_proj_data[pid_str]["ml_ev_1gw"])
+            base_ml_ev = float(ml_proj_data[pid_str]["ml_ev_1gw"])
+            # Re-scale EV if a Human Oracle xMins override exists for this player
+            if pid_str in xmins_overrides:
+                orig_xmins = float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p)))
+                target_xmins = float(xmins_overrides[pid_str])
+                heuristic_ev = base_ml_ev * (target_xmins / orig_xmins) if orig_xmins > 0 else 0.0
+            else:
+                heuristic_ev = base_ml_ev
         else:
             heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
             

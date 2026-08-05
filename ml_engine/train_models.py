@@ -250,9 +250,14 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     if xmins_env and xmins_env.strip():
         try:
             custom_xmins_dict = json.loads(xmins_env.replace("'", '"'))
-            logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides.")
-        except Exception as e:
-            logger.warning(f"Failed to parse XMINS_INPUT JSON: {e}")
+        except json.JSONDecodeError:
+            for override in xmins_env.split(","):
+                if ":" in override:
+                    k, v = override.split(":")
+                    try:
+                        custom_xmins_dict[k.strip()] = float(v.strip())
+                    except ValueError: pass
+        logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides into ML Pipeline.")
 
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
