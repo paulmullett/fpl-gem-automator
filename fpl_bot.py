@@ -263,20 +263,46 @@ def get_fpl_data():
     market_str = "Market data & live price deltas initialized."
 
     # Sole method of forcing minute overrides: Explicit Human-in-the-Loop input
+    # --- HUMAN-IN-THE-LOOP (HITL) GATEKEEPER ---
     if XMINS_INPUT:
         print(f"Processing Human Oracle Input: {XMINS_INPUT}")
-        for override in XMINS_INPUT.split(","):
-            if ":" in override:
-                name_part, min_part = override.split(":")
-                name_part = name_part.strip().lower()
-                try:
-                    target_mins = float(min_part.strip())
+        # Support both standard comma-separated and JSON-formatted inputs
+        try:
+            # If it's a valid JSON string, load it directly
+            overrides = json.loads(XMINS_INPUT.replace("'", '"'))
+            items = overrides.items()
+        except json.JSONDecodeError:
+            # Fallback to rapid comma-separated typing (e.g., "Saka: 60, Gabriel: 0")
+            items = []
+            for override in XMINS_INPUT.split(","):
+                if ":" in override:
+                    k, v = override.split(":")
+                    items.append((k.strip(), v.strip()))
+
+        for name_part, min_part in items:
+            name_lower = str(name_part).strip().lower()
+            try:
+                target_mins = float(min_part)
+                match_found = False
+                
+                # First Pass: Exact 'web_name' match (Safest)
+                for pid, p in players.items():
+                    if p.get("name", "").lower() == name_lower:
+                        xmins_overrides[str(pid)] = target_mins
+                        print(f"   -> ORACLE OVERRIDE LOCKED: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                        match_found = True
+                        break
+                        
+                # Second Pass: Substring match if exact fails (e.g., typing "Trent" for TAA)
+                if not match_found:
                     for pid, p in players.items():
-                        if name_part in p["name"].lower():
+                        if name_lower in p.get("name", "").lower():
                             xmins_overrides[str(pid)] = target_mins
-                            print(f"   -> MANUAL ORACLE OVERRIDE: {p['name']} locked to {target_mins} mins.")
-                except ValueError:
-                    print(f"   -> WARNING: Could not parse override '{override}'")
+                            print(f"   -> ORACLE FUZZY OVERRIDE: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                            break
+                            
+            except ValueError:
+                print(f"   -> WARNING: Could not parse minute value for '{name_part}'")
     
     current_squad_ids = []
     bank = 0.0
