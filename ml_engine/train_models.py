@@ -261,6 +261,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
+        # Populate clean_team so find_best_match can filter by team
+        fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
+        
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
         df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left', suffixes=('', '_fbref'))
         logger.info(f"FPL to FBref Match Rate: {df['matched_fbref_name'].notna().mean() * 100:.1f}%")
