@@ -146,17 +146,21 @@ def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
     if os.path.exists("fplreview.csv"):
         try:
             df = pd.read_csv("fplreview.csv")
-            # FPLReview standard columns: 'Name', '1_xMins'
-            name_col = next((c for c in df.columns if 'name' in c.lower()), None)
+            # FPLReview standard export contains 'ID' and '1_xMins'
+            id_col = next((c for c in df.columns if c.lower().strip() in ['id', 'element']), None)
             mins_col = next((c for c in df.columns if 'xmins' in c.lower() or 'mins' in c.lower()), None)
             
-            if name_col and mins_col:
+            if id_col and mins_col:
                 for _, row in df.iterrows():
-                    match = difflib.get_close_matches(str(row[name_col]), name_pool, n=1, cutoff=0.70)
-                    if match:
-                        crowd_xmins[match[0]] = float(row[mins_col])
-                logger.info(f"Loaded {len(crowd_xmins)} xMins projections from local fplreview.csv")
+                    try:
+                        pid = int(row[id_col])
+                        crowd_xmins[pid] = float(row[mins_col])
+                    except (ValueError, TypeError):
+                        continue
+                logger.info(f"Loaded {len(crowd_xmins)} xMins projections from local fplreview.csv via exact ID match")
                 return crowd_xmins
+            else:
+                logger.warning("Could not find 'ID' or 'xMins' columns in fplreview.csv")
         except Exception as e:
             logger.warning(f"Failed to parse local fplreview.csv: {e}")
 
@@ -389,7 +393,10 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         }
         
         original_xmins = estimate_xmins(player_obj)
-        final_xmins = custom_xmins_dict.get(web_name, crowd_xmins_dict.get(web_name, original_xmins))
+        
+        # Safely checks for the integer ID (from local CSV), falls back to web_name (from remote JSON), then to heuristics
+        crowd_val = crowd_xmins_dict.get(int(row['id']), crowd_xmins_dict.get(web_name, original_xmins))
+        final_xmins = custom_xmins_dict.get(web_name, crowd_val)
 
         calculated_ev = row['ml_base_ev'] * row['opponent_def_rating']
         if final_xmins != original_xmins and original_xmins > 0:
