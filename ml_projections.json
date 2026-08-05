@@ -3474,11 +3474,11 @@
         "predicted_price_delta": 0.0
     },
     "379": {
-        "ml_xmins": 90.0,
-        "ml_ev_1gw": 3.39,
-        "ml_ev_8gw": 25.8,
-        "mc_floor_ev": 2.04,
-        "mc_ceiling_ev": 5.09,
+        "ml_xmins": 10.0,
+        "ml_ev_1gw": 0.38,
+        "ml_ev_8gw": 2.87,
+        "mc_floor_ev": 0.23,
+        "mc_ceiling_ev": 0.57,
         "top_10k_eo": 11.2,
         "predicted_price_delta": 0.0
     },
@@ -3771,11 +3771,11 @@
         "predicted_price_delta": 0.0
     },
     "411": {
-        "ml_xmins": 90.0,
-        "ml_ev_1gw": 5.11,
-        "ml_ev_8gw": 38.84,
-        "mc_floor_ev": 3.07,
-        "mc_ceiling_ev": 7.67,
+        "ml_xmins": 80.0,
+        "ml_ev_1gw": 4.54,
+        "ml_ev_8gw": 34.53,
+        "mc_floor_ev": 2.73,
+        "mc_ceiling_ev": 6.81,
         "top_10k_eo": 120.0,
         "predicted_price_delta": 0.0
     },
