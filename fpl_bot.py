@@ -251,6 +251,16 @@ def get_fpl_data():
     new_arrivals = []
     for raw_p in bootstrap_data.get("elements", []):
         p = normalize_player(raw_p, teams, element_types)
+        
+        # Attach ML Projections and Monte Carlo bounds if available
+        pid_str = str(p["id"])
+        if pid_str in ml_proj_data:
+            p["ml_xmins"] = float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p)))
+            p["mc_floor_ev"] = float(ml_proj_data[pid_str].get("mc_floor_ev", 0.0))
+            p["mc_ceiling_ev"] = float(ml_proj_data[pid_str].get("mc_ceiling_ev", 0.0))
+        else:
+            p["ml_xmins"] = estimate_xmins(p)
+            
         players[p["id"]] = p
         if p.get("has_stale_pl_history") or p.get("total_points", 0) == 0:
             new_arrivals.append(f"- {p['name']} ({p['team']})")
@@ -587,7 +597,7 @@ def get_fpl_data():
     macro_squad_8gw_xp = sum(get_macro_ev(p, team_avg_fdr, weights, xmins_overrides, market_data, 8, RISK_POSTURE) for p in optimal_squad)
     
     from fpl_monte_carlo import run_monte_carlo_simulations
-    mc_players = {p["id"]: {"est_xmins": estimate_xmins(p), "xgi_90": p["xgi_90"], "pos_id": p["pos_id"], "ep_next": p["ep_next"]} for p in starters}
+    mc_players = {p["id"]: {"est_xmins": p.get("ml_xmins", estimate_xmins(p)), "xgi_90": p["xgi_90"], "pos_id": p["pos_id"], "ep_next": p["ep_next"]} for p in starters}
     mc_results = run_monte_carlo_simulations(mc_players, num_trials=1000)
     
     starter_floor = sum(res["floor"] for res in mc_results.values())

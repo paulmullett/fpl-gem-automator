@@ -409,17 +409,32 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         crowd_val = crowd_xmins_dict.get(int(row['id']), crowd_xmins_dict.get(web_name, original_xmins))
         final_xmins = custom_xmins_dict.get(web_name, crowd_val)
 
-        # Base EV assumes a 90-minute appearance. Scale it linearly by the finalized xMins.
-        calculated_ev = row['ml_base_ev'] * row['opponent_def_rating']
-        calculated_ev = calculated_ev * (final_xmins / 90.0)
+        # Piecewise Non-Linear EV Scaling
+        # Appearance points (2.0 pts) lock in at 60+ mins via Sigmoid probability.
+        # Attacking EV (xGI) scales linearly with per-90 time on pitch.
+        base_ev = row['ml_base_ev']
         
+        # Estimate appearance EV component (capped at 2.0 pts)
+        prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (final_xmins - 60.0)))
+        app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (final_xmins / 60.0))
+        
+        # Residual attacking/defensive upside above appearance baseline
+        attacking_ev = max(0.0, base_ev - 2.0) * (final_xmins / 90.0)
+        
+        calculated_ev = (app_ev + attacking_ev) * row['opponent_def_rating']
+        
+        # Calculate position-specific variance boundaries
+        pos_id = int(row.get('element_type', 3))
+        mins_variance_penalty = max(0.5, final_xmins / 90.0)
+        sigma = calculated_ev * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30)) / mins_variance_penalty
+
         projections[pid] = {
             "name": web_name,
             "ml_xmins": round(final_xmins, 1),
             "ml_ev_1gw": round(calculated_ev, 2),
             "ml_ev_8gw": round(calculated_ev * 8 * 0.95, 2),
-            "mc_floor_ev": round(calculated_ev * 0.6, 2),
-            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),
+            "mc_floor_ev": round(max(0.0, calculated_ev - sigma), 2),
+            "mc_ceiling_ev": round(calculated_ev + (sigma * 1.25), 2),
             "top_10k_eo": round(top_10k_eo, 2),
             "predicted_price_delta": predicted_delta
         }
