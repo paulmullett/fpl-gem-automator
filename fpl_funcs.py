@@ -187,6 +187,11 @@ def get_live_price_deltas(players_dict: dict) -> dict:
         transfers_out = _safe_float(p.get("transfers_out_event"), 0.0)
         net_transfers = transfers_in - transfers_out
         
+        # Zero-State catch for Pre-Season / Flat Markets
+        if net_transfers == 0:
+            deltas[pid] = 0.0
+            continue
+        
         own_percent = max(0.5, _safe_float(p.get("own"), 1.0))
         
         # Ownership-relative velocity metric
