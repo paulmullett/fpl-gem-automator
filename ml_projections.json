@@ -1089,12 +1089,12 @@
         "predicted_price_delta": 0.0
     },
     "124": {
-        "ml_xmins": 86.5,
+        "ml_xmins": 86.6,
         "ml_ev_1gw": 2.45,
         "ml_ev_8gw": 18.61,
         "mc_floor_ev": 1.47,
         "mc_ceiling_ev": 3.67,
-        "top_10k_eo": 3.9,
+        "top_10k_eo": 3.95,
         "predicted_price_delta": 0.0
     },
     "125": {
@@ -1913,7 +1913,7 @@
         "ml_ev_8gw": 20.11,
         "mc_floor_ev": 1.59,
         "mc_ceiling_ev": 3.97,
-        "top_10k_eo": 4.85,
+        "top_10k_eo": 4.8,
         "predicted_price_delta": 0.0
     },
     "209": {
@@ -3474,11 +3474,11 @@
         "predicted_price_delta": 0.0
     },
     "379": {
-        "ml_xmins": 10.0,
-        "ml_ev_1gw": 0.38,
-        "ml_ev_8gw": 2.87,
-        "mc_floor_ev": 0.23,
-        "mc_ceiling_ev": 0.57,
+        "ml_xmins": 90.0,
+        "ml_ev_1gw": 3.39,
+        "ml_ev_8gw": 25.8,
+        "mc_floor_ev": 2.04,
+        "mc_ceiling_ev": 5.09,
         "top_10k_eo": 11.2,
         "predicted_price_delta": 0.0
     },
@@ -3771,11 +3771,11 @@
         "predicted_price_delta": 0.0
     },
     "411": {
-        "ml_xmins": 80.0,
-        "ml_ev_1gw": 4.54,
-        "ml_ev_8gw": 34.53,
-        "mc_floor_ev": 2.73,
-        "mc_ceiling_ev": 6.81,
+        "ml_xmins": 90.0,
+        "ml_ev_1gw": 5.11,
+        "ml_ev_8gw": 38.84,
+        "mc_floor_ev": 3.07,
+        "mc_ceiling_ev": 7.67,
         "top_10k_eo": 120.0,
         "predicted_price_delta": 0.0
     },
@@ -3888,12 +3888,12 @@
         "predicted_price_delta": 0.0
     },
     "420": {
-        "ml_xmins": 48.4,
+        "ml_xmins": 48.9,
         "ml_ev_1gw": 2.71,
         "ml_ev_8gw": 20.59,
         "mc_floor_ev": 1.63,
         "mc_ceiling_ev": 4.06,
-        "top_10k_eo": 0.3,
+        "top_10k_eo": 0.35,
         "predicted_price_delta": 0.0
     },
     "421": {
@@ -4181,7 +4181,7 @@
         "ml_ev_8gw": 20.89,
         "mc_floor_ev": 1.65,
         "mc_ceiling_ev": 4.12,
-        "top_10k_eo": 4.2,
+        "top_10k_eo": 4.25,
         "predicted_price_delta": 0.0
     },
     "453": {
