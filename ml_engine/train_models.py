@@ -204,45 +204,40 @@ def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
 
 def execute_tri_model_regression(df: pd.DataFrame) -> np.ndarray:
     """
-    Trains a Tri-Model ML Regressor Suite to predict 1-GW Expected Value.
+    Trains a Tri-Model ML Regressor Suite to predict a performance adjustment 
+    scalar based on underlying metrics (CBIT, xGI, xGC, Matchup Ratings).
     """
-    logger.info("Initializing Tri-Model Regressor Suite (XGBoost, LightGBM, Random Forest)...")
+    logger.info("Initializing Tri-Model Residual Regressor Suite (XGBoost, LightGBM, Random Forest)...")
     
-    # 1. Feature Matrix Construction
     features = [
         'cost_float', 'global_own', 'combined_xgi', 'xgc_90_num', 
-        'opponent_def_rating', 'fb_mins', 'age_num', 
-        'fpl_cbit_90', 'fpl_cbirt_90'
+        'opponent_def_rating', 'fb_mins', 'fpl_cbit_90', 'fpl_cbirt_90'
     ]
     X = df[features].fillna(0.0)
     
-    # 2. Target Variable (y) Definition
-    # Pre-season proxy: Blend of proprietary algorithmic expectations. 
-    # To be swapped to actual points_per_90 once the season has accrued 4+ gameweeks.
-    ep = pd.to_numeric(df['ep_next_raw'], errors='coerce').fillna(0.0)
-    form = pd.to_numeric(df['form_raw'], errors='coerce').fillna(0.0)
-    y = (ep * 0.7) + (form * 0.3)
+    # Target (y): Multiplicative scalar around 1.0 based on form/ep relative to cost prior
+    expected_base = np.maximum(1.0, df['cost_float'] * 0.5)
+    raw_target = pd.to_numeric(df['ep_next_raw'], errors='coerce').fillna(0.0)
     
-    # 3. Model Initialization
-    xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42)
-    lgb_model = LGBMRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42, verbose=-1)
-    rf_model = RandomForestRegressor(n_estimators=100, max_depth=4, random_state=42)
+    # Create normalized performance ratio target
+    y = np.where(raw_target > 0, raw_target / expected_base, 1.0)
+    y = np.clip(y, 0.5, 2.0)
     
-    # 4. In-Memory Training
+    xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.03, max_depth=3, random_state=42)
+    lgb_model = LGBMRegressor(n_estimators=100, learning_rate=0.03, max_depth=3, random_state=42, verbose=-1)
+    rf_model = RandomForestRegressor(n_estimators=100, max_depth=3, random_state=42)
+    
     xgb_model.fit(X, y)
     lgb_model.fit(X, y)
     rf_model.fit(X, y)
     
-    # 5. Ensemble Prediction Generation
-    # Weighting: 40% XGBoost, 40% LightGBM, 20% Random Forest (Variance Reducer)
     xgb_preds = xgb_model.predict(X)
     lgb_preds = lgb_model.predict(X)
     rf_preds = rf_model.predict(X)
     
-    ensemble_preds = (0.4 * xgb_preds) + (0.4 * lgb_preds) + (0.2 * rf_preds)
-    
-    # Ensure no negative EVs are returned
-    return np.maximum(0.0, ensemble_preds)
+    # Weighted ensemble adjustment scalar
+    ensemble_scalars = (0.4 * xgb_preds) + (0.4 * lgb_preds) + (0.2 * rf_preds)
+    return np.clip(ensemble_scalars, 0.6, 1.6)
 
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
     logger.info("Aligning FPL and FBref datasets for ML Pipeline...")
@@ -261,7 +256,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
-        # Populate clean_team so find_best_match can filter by team
         fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
         
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
@@ -277,7 +271,6 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
     teams_short_by_id = {t['id']: t['short_name'] for t in bootstrap.get('teams', [])}
 
-    # --- VECTORIZED FEATURE ENGINEERING ---
     def resolve_opp_rating(team_id):
         try:
             opp_id = opp_mapping.get(int(team_id))
@@ -290,34 +283,22 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         return 1.0
 
     df['opponent_def_rating'] = df['team'].apply(resolve_opp_rating)
-
-    # Safely convert columns with conditional fallback checks
     df['cost_float'] = (pd.to_numeric(df['now_cost'], errors='coerce').fillna(40) if 'now_cost' in df.columns else 40) / 10.0
     df['global_own'] = pd.to_numeric(df['selected_by_percent'], errors='coerce').fillna(0.0) if 'selected_by_percent' in df.columns else 0.0
     df['fb_mins'] = pd.to_numeric(df['minutes_played'], errors='coerce').fillna(0.0) if 'minutes_played' in df.columns else 0.0
-    df['age_num'] = pd.to_numeric(df['age'], errors='coerce').fillna(25) if 'age' in df.columns else 25.0
     df['xgc_90_num'] = pd.to_numeric(df['expected_goals_conceded_per_90'], errors='coerce').fillna(1.35) if 'expected_goals_conceded_per_90' in df.columns else 1.35
     df['ep_next_raw'] = pd.to_numeric(df['ep_next'], errors='coerce').fillna(0.0) if 'ep_next' in df.columns else 0.0
     df['form_raw'] = pd.to_numeric(df['form'], errors='coerce').fillna(0.0) if 'form' in df.columns else 0.0
 
-    # Calculate native DEFCON metrics for the ML Matrix
     df['fpl_mins_played'] = (pd.to_numeric(df['minutes'], errors='coerce').fillna(0.0) if 'minutes' in df.columns else pd.Series(0.0, index=df.index)).clip(lower=0.001)
     
     cbit_cols = [c for c in ['clearances', 'blocks', 'interceptions', 'tackles'] if c in df.columns]
-    if cbit_cols:
-        df['fpl_cbit'] = df[cbit_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
-    else:
-        df['fpl_cbit'] = 0.0
-    
-    if 'recoveries' in df.columns:
-        df['fpl_cbirt'] = df['fpl_cbit'] + pd.to_numeric(df['recoveries'], errors='coerce').fillna(0)
-    else:
-        df['fpl_cbirt'] = df['fpl_cbit']
+    df['fpl_cbit'] = df[cbit_cols].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1) if cbit_cols else 0.0
+    df['fpl_cbirt'] = df['fpl_cbit'] + (pd.to_numeric(df['recoveries'], errors='coerce').fillna(0) if 'recoveries' in df.columns else 0)
 
     df['fpl_cbit_90'] = (df['fpl_cbit'] / df['fpl_mins_played']) * 90.0
     df['fpl_cbirt_90'] = (df['fpl_cbirt'] / df['fpl_mins_played']) * 90.0
 
-    # Calculate blended xGI
     fb_xg = pd.to_numeric(df['fbref_xg'], errors='coerce').fillna(0.0) if 'fbref_xg' in df.columns else 0.0
     fb_xag = pd.to_numeric(df['fbref_xag'], errors='coerce').fillna(0.0) if 'fbref_xag' in df.columns else 0.0
     native_xgi = pd.to_numeric(df['expected_goal_involvements_per_90'], errors='coerce').fillna(0.0) if 'expected_goal_involvements_per_90' in df.columns else 0.0
@@ -328,17 +309,30 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         native_xgi
     )
 
-    # --- EXECUTE TRI-MODEL MACHINE LEARNING REGRESSION ---
-    ml_predictions = execute_tri_model_regression(df)
-    df['ml_base_ev'] = ml_predictions
+    # --- DOMAIN BASELINE EVALUATION ---
+    # Calculates structural baseline EV preserving premium player pricing curves
+    pos_ids = pd.to_numeric(df['element_type'], errors='coerce').fillna(3).astype(int)
+    base_evs = np.where(
+        pos_ids == 1, 3.5 + (df['cost_float'] - 4.0) * 0.20,
+        np.where(
+            pos_ids == 2, 3.2 + (df['cost_float'] - 4.0) * 0.30 + (df['combined_xgi'] * 0.10),
+            np.where(
+                pos_ids == 3, 3.0 + (df['cost_float'] - 4.5) * 0.35 + (df['combined_xgi'] * 0.15),
+                3.2 + (df['cost_float'] - 4.5) * 0.40 + (df['combined_xgi'] * 0.20)
+            )
+        )
+    )
+    df['domain_base_ev'] = base_evs
 
-    # --- POPULATE FINAL JSON PAYLOAD ---
+    # --- EXECUTE TRI-MODEL MACHINE LEARNING REGRESSION ---
+    ml_scalars = execute_tri_model_regression(df)
+    df['ml_base_ev'] = df['domain_base_ev'] * ml_scalars
+
     projections = {}
     for idx, row in df.iterrows():
         pid = str(row['id'])
         web_name = str(row.get('web_name', 'Unknown'))
         
-        # Ownership calculations
         if pid in top10k_eo_dict:
             top_10k_eo = top10k_eo_dict[pid]
         else:
@@ -361,11 +355,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "fb_mins": row['fb_mins']
         }
         
-        # xMins Hierarchy Resolution
         original_xmins = estimate_xmins(player_obj)
         final_xmins = custom_xmins_dict.get(web_name, crowd_xmins_dict.get(web_name, original_xmins))
 
-        # Apply Matchup Multiplier & xMins Delta to ML output
         calculated_ev = row['ml_base_ev'] * row['opponent_def_rating']
         if final_xmins != original_xmins and original_xmins > 0:
             calculated_ev = calculated_ev * (final_xmins / original_xmins)
@@ -380,5 +372,5 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "predicted_price_delta": predicted_delta         
         }
         
-    logger.info(f"Successfully generated Tri-Model ML projections for {len(projections)} players.")
+    logger.info(f"Successfully generated Residual ML projections for {len(projections)} players.")
     return projections
