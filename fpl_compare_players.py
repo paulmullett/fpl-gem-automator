@@ -131,17 +131,39 @@ def fetch_data_and_compare():
             if th in team_fdr_sum: team_fdr_sum[th] += f.get("team_h_difficulty", 3); team_fdr_count[th] += 1
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
+    # --- LOAD ML PROJECTIONS ---
+    ml_proj_data = {}
+    if os.path.exists("ml_projections.json"):
+        try:
+            with open("ml_projections.json", "r") as f:
+                ml_proj_data = json.load(f)
+        except Exception: pass
+
     # Player 1 Model Execution
-    xmins1 = estimate_xmins(p1)
-    ev_1gw_1 = get_ensemble_ev(p1, {}, market_data, weights, RISK_POSTURE)
-    macro_8gw_1 = get_macro_ev(p1, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
+    pid1_str = str(p1["id"])
+    if pid1_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid1_str] and float(ml_proj_data[pid1_str]["ml_ev_1gw"]) > 0:
+        xmins1 = float(ml_proj_data[pid1_str].get("ml_xmins", estimate_xmins(p1)))
+        ev_1gw_1 = float(ml_proj_data[pid1_str]["ml_ev_1gw"])
+        macro_8gw_1 = float(ml_proj_data[pid1_str]["ml_ev_8gw"])
+    else:
+        xmins1 = estimate_xmins(p1)
+        ev_1gw_1 = get_ensemble_ev(p1, {}, market_data, weights, RISK_POSTURE)
+        macro_8gw_1 = get_macro_ev(p1, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
+        
     val_1gw_1 = ev_1gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
     val_8gw_1 = macro_8gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
 
     # Player 2 Model Execution
-    xmins2 = estimate_xmins(p2)
-    ev_1gw_2 = get_ensemble_ev(p2, {}, market_data, weights, RISK_POSTURE)
-    macro_8gw_2 = get_macro_ev(p2, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
+    pid2_str = str(p2["id"])
+    if pid2_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid2_str] and float(ml_proj_data[pid2_str]["ml_ev_1gw"]) > 0:
+        xmins2 = float(ml_proj_data[pid2_str].get("ml_xmins", estimate_xmins(p2)))
+        ev_1gw_2 = float(ml_proj_data[pid2_str]["ml_ev_1gw"])
+        macro_8gw_2 = float(ml_proj_data[pid2_str]["ml_ev_8gw"])
+    else:
+        xmins2 = estimate_xmins(p2)
+        ev_1gw_2 = get_ensemble_ev(p2, {}, market_data, weights, RISK_POSTURE)
+        macro_8gw_2 = get_macro_ev(p2, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
+        
     val_1gw_2 = ev_1gw_2 / p2["cost"] if p2["cost"] > 0 else 0.0
     val_8gw_2 = macro_8gw_2 / p2["cost"] if p2["cost"] > 0 else 0.0
 
