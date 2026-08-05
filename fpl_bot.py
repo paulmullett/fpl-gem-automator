@@ -247,6 +247,16 @@ def get_fpl_data():
     state["last_updated_gw"] = target_gw
     weights = state["calibration_weights"]
 
+    # Load ML Projections payload before normalizing players
+    ml_proj_data = {}
+    if os.path.exists("ml_projections.json"):
+        try:
+            with open("ml_projections.json", "r") as f:
+                ml_proj_data = json.load(f)
+                print("SUCCESS: Loaded local projections from ml_projections.json")
+        except Exception as e:
+            print(f"WARNING: Could not read ml_projections.json: {e}")
+
     players = {}
     new_arrivals = []
     for raw_p in bootstrap_data.get("elements", []):
@@ -373,17 +383,6 @@ def get_fpl_data():
                 team_gw_opponents[team_a][t].append({"opp": team_h, "is_home": False})
             if team_h in team_gw_opponents:
                 team_gw_opponents[team_h][t].append({"opp": team_a, "is_home": True})
-
-    # --- ADDED: Load ML Projections ---
-    ml_proj_data = {}
-    if os.path.exists("ml_projections.json"):
-        try:
-            with open("ml_projections.json", "r") as f:
-                ml_proj_data = json.load(f)
-            print("SUCCESS: Loaded local FBref projections from ml_projections.json")
-        except Exception as e:
-            print(f"WARNING: Could not read ml_projections.json: {e}")
-    # ----------------------------------
 
     ev_matrix = {}
     valid_ids = list(players.keys())
