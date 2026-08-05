@@ -4,17 +4,20 @@ ml_engine/train_models.py — Unified Dataset Alignment & Projections Engine
 
 import os
 import sys
+import json
+import logging
+import requests
+import difflib
+import unicodedata
 import pandas as pd
 import numpy as np
-import logging
-import unicodedata
-import difflib
-import json
-import requests # NEW: Required for LiveFPL API fetching
 
-# Ensure root directory is on sys.path to import fpl_funcs
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from sklearn.ensemble import RandomForestRegressor
+
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from fpl_funcs import get_ensemble_ev, estimate_xmins
+from fpl_funcs import estimate_xmins
 
 logger = logging.getLogger(__name__)
 
@@ -199,8 +202,50 @@ def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
         logger.warning(f"Could not fetch upcoming fixture mapping: {e}")
     return opp_map
 
+def execute_tri_model_regression(df: pd.DataFrame) -> np.ndarray:
+    """
+    Trains a Tri-Model ML Regressor Suite to predict 1-GW Expected Value.
+    """
+    logger.info("Initializing Tri-Model Regressor Suite (XGBoost, LightGBM, Random Forest)...")
+    
+    # 1. Feature Matrix Construction
+    features = [
+        'cost_float', 'global_own', 'combined_xgi', 'xgc_90_num', 
+        'opponent_def_rating', 'fb_mins', 'age_num', 
+        'fpl_cbit_90', 'fpl_cbirt_90'
+    ]
+    X = df[features].fillna(0.0)
+    
+    # 2. Target Variable (y) Definition
+    # Pre-season proxy: Blend of proprietary algorithmic expectations. 
+    # To be swapped to actual points_per_90 once the season has accrued 4+ gameweeks.
+    ep = pd.to_numeric(df['ep_next_raw'], errors='coerce').fillna(0.0)
+    form = pd.to_numeric(df['form_raw'], errors='coerce').fillna(0.0)
+    y = (ep * 0.7) + (form * 0.3)
+    
+    # 3. Model Initialization
+    xgb_model = XGBRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42)
+    lgb_model = LGBMRegressor(n_estimators=100, learning_rate=0.05, max_depth=4, random_state=42, verbose=-1)
+    rf_model = RandomForestRegressor(n_estimators=100, max_depth=4, random_state=42)
+    
+    # 4. In-Memory Training
+    xgb_model.fit(X, y)
+    lgb_model.fit(X, y)
+    rf_model.fit(X, y)
+    
+    # 5. Ensemble Prediction Generation
+    # Weighting: 40% XGBoost, 40% LightGBM, 20% Random Forest (Variance Reducer)
+    xgb_preds = xgb_model.predict(X)
+    lgb_preds = lgb_model.predict(X)
+    rf_preds = rf_model.predict(X)
+    
+    ensemble_preds = (0.4 * xgb_preds) + (0.4 * lgb_preds) + (0.2 * rf_preds)
+    
+    # Ensure no negative EVs are returned
+    return np.maximum(0.0, ensemble_preds)
+
 def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dict:
-    logger.info("Aligning FPL and FBref datasets...")
+    logger.info("Aligning FPL and FBref datasets for ML Pipeline...")
     
     top10k_eo_dict = get_livefpl_top10k_eo()
     crowd_xmins_dict = get_crowdsourced_xmins(fpl_df)
@@ -209,141 +254,106 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     xmins_env = os.getenv("XMINS_INPUT", "")
     if xmins_env and xmins_env.strip():
         try:
-            clean_env = xmins_env.replace("'", '"')
-            custom_xmins_dict = json.loads(clean_env)
-            logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides from environment.")
+            custom_xmins_dict = json.loads(xmins_env.replace("'", '"'))
+            logger.info(f"Loaded {len(custom_xmins_dict)} manual xMins overrides.")
         except Exception as e:
-            logger.warning(f"Failed to parse XMINS_INPUT JSON. Ignoring overrides. Error: {e}")
+            logger.warning(f"Failed to parse XMINS_INPUT JSON: {e}")
 
     if not fbref_df.empty:
         fbref_df['clean_fbref_name'] = fbref_df['name'].apply(strip_accents)
-        fbref_df['clean_team'] = fbref_df['team'].apply(strip_accents) if 'team' in fbref_df.columns else ""
-        
         fpl_df['matched_fbref_name'] = fpl_df.apply(lambda row: find_best_match(row, fbref_df), axis=1)
-        
-        # FIX 1: Add suffixes to prevent the 'team' column collision during merge
         df = pd.merge(fpl_df, fbref_df, left_on='matched_fbref_name', right_on='clean_fbref_name', how='left', suffixes=('', '_fbref'))
-        
-        match_rate = df['matched_fbref_name'].notna().mean() * 100
-        logger.info(f"FPL to FBref Match Rate: {match_rate:.1f}%")
+        logger.info(f"FPL to FBref Match Rate: {df['matched_fbref_name'].notna().mean() * 100:.1f}%")
     else:
         df = fpl_df.copy()
 
-    projections = {}
-
     from ml_engine.data_ingestion import get_team_matchup_ratings
-    
-    # Use fpl_df as fallback for pre-season empty FBref stats
     team_ratings = get_team_matchup_ratings(fbref_df, fpl_df)
-    opp_mapping = get_upcoming_opponent_mapping(current_gw=1)
+    opp_mapping = get_upcoming_opponent_mapping()
     
     bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
     teams_short_by_id = {t['id']: t['short_name'] for t in bootstrap.get('teams', [])}
-    
-    def calculate_player_opp_rating(row):
+
+    # --- VECTORIZED FEATURE ENGINEERING ---
+    def resolve_opp_rating(team_id):
         try:
-            # FIX 2: Safely extract integer ID now that suffixes prevent the overlap
-            player_team_id = int(row['team'])
-        except (ValueError, TypeError, KeyError):
-            return 1.0
-            
-        opp_id = opp_mapping.get(player_team_id)
-        if not opp_id:
-            return 1.0
-            
-        opp_short = teams_short_by_id.get(opp_id, "")
-        if opp_short in team_ratings:
-            return team_ratings[opp_short]
-            
-        opp_fbref_name = FPL_TO_FBREF_TEAM.get(opp_short, "")
-        if opp_fbref_name in team_ratings:
-            return team_ratings[opp_fbref_name]
-            
+            opp_id = opp_mapping.get(int(team_id))
+            if not opp_id: return 1.0
+            opp_short = teams_short_by_id.get(opp_id, "")
+            if opp_short in team_ratings: return team_ratings[opp_short]
+            opp_fbref = FPL_TO_FBREF_TEAM.get(opp_short, "")
+            if opp_fbref in team_ratings: return team_ratings[opp_fbref]
+        except: pass
         return 1.0
 
-    df['opponent_def_rating'] = df.apply(calculate_player_opp_rating, axis=1)
+    df['opponent_def_rating'] = df['team'].apply(resolve_opp_rating)
+    df['cost_float'] = pd.to_numeric(df.get('now_cost', 40), errors='coerce').fillna(40) / 10.0
+    df['global_own'] = pd.to_numeric(df.get('selected_by_percent', 0.0), errors='coerce').fillna(0.0)
+    df['fb_mins'] = pd.to_numeric(df.get('minutes_played', 0.0), errors='coerce').fillna(0.0)
+    df['age_num'] = pd.to_numeric(df.get('age', 25), errors='coerce').fillna(25)
+    df['xgc_90_num'] = pd.to_numeric(df.get('expected_goals_conceded_per_90', 1.35), errors='coerce').fillna(1.35)
+    df['ep_next_raw'] = df.get('ep_next', 0.0)
+    df['form_raw'] = df.get('form', 0.0)
 
-    for _, row in df.iterrows():
+    # Calculate native DEFCON metrics for the ML Matrix
+    df['fpl_mins_played'] = pd.to_numeric(df.get('minutes', 0.0), errors='coerce').clip(lower=0.001)
+    df['fpl_cbit'] = df[['clearances', 'blocks', 'interceptions', 'tackles']].apply(pd.to_numeric, errors='coerce').fillna(0).sum(axis=1)
+    df['fpl_cbirt'] = df['fpl_cbit'] + pd.to_numeric(df.get('recoveries', 0), errors='coerce').fillna(0)
+    df['fpl_cbit_90'] = (df['fpl_cbit'] / df['fpl_mins_played']) * 90.0
+    df['fpl_cbirt_90'] = (df['fpl_cbirt'] / df['fpl_mins_played']) * 90.0
+
+    # Calculate blended xGI
+    fb_xg = pd.to_numeric(df.get('fbref_xg', 0.0), errors='coerce').fillna(0.0)
+    fb_xag = pd.to_numeric(df.get('fbref_xag', 0.0), errors='coerce').fillna(0.0)
+    native_xgi = pd.to_numeric(df.get('expected_goal_involvements_per_90', 0.0), errors='coerce').fillna(0.0)
+    
+    df['combined_xgi'] = np.where(
+        df['fb_mins'] > 270.0,
+        np.where(native_xgi > 0, (0.60 * ((fb_xg + fb_xag) / (df['fb_mins'] / 90.0))) + (0.40 * native_xgi), ((fb_xg + fb_xag) / (df['fb_mins'] / 90.0))),
+        native_xgi
+    )
+
+    # --- EXECUTE TRI-MODEL MACHINE LEARNING REGRESSION ---
+    ml_predictions = execute_tri_model_regression(df)
+    df['ml_base_ev'] = ml_predictions
+
+    # --- POPULATE FINAL JSON PAYLOAD ---
+    projections = {}
+    for idx, row in df.iterrows():
         pid = str(row['id'])
-        web_name = row.get('web_name', 'Unknown')
+        web_name = str(row.get('web_name', 'Unknown'))
         
-        fb_xg = float(row.get('fbref_xg', 0.0)) if pd.notna(row.get('fbref_xg')) else 0.0
-        fb_xag = float(row.get('fbref_xag', 0.0)) if pd.notna(row.get('fbref_xag')) else 0.0
-        fb_mins = float(row.get('minutes_played', 0.0)) if pd.notna(row.get('minutes_played')) else 0.0
-        
-        native_xgi = float(row.get('expected_goal_involvements_per_90', 0.0) or 0.0)
-        
-        if fb_mins > 270.0:
-            fb_xgi_90 = (fb_xg + fb_xag) / (fb_mins / 90.0)
-            combined_xgi = (0.60 * fb_xgi_90) + (0.40 * native_xgi) if native_xgi > 0 else fb_xgi_90
-        else:
-            combined_xgi = native_xgi
-
-        global_own = float(row.get('selected_by_percent', 0.0) or 0.0)
-        cost_float = float(row.get('now_cost', 40)) / 10.0
-        
+        # Ownership calculations
         if pid in top10k_eo_dict:
             top_10k_eo = top10k_eo_dict[pid]
         else:
-            if global_own > 30.0 and cost_float >= 10.0:
-                top_10k_eo = min(200.0, global_own * 1.6) 
-            elif global_own > 20.0 and cost_float >= 7.0:
-                top_10k_eo = min(150.0, global_own * 1.3)
-            elif global_own < 10.0:
-                top_10k_eo = global_own * 0.5 
-            else:
-                top_10k_eo = global_own
+            if row['global_own'] > 30.0 and row['cost_float'] >= 10.0: top_10k_eo = min(200.0, row['global_own'] * 1.6) 
+            elif row['global_own'] > 20.0 and row['cost_float'] >= 7.0: top_10k_eo = min(150.0, row['global_own'] * 1.3)
+            elif row['global_own'] < 10.0: top_10k_eo = row['global_own'] * 0.5 
+            else: top_10k_eo = row['global_own']
                 
         transfers_in = int(row.get('transfers_in_event', 0) or 0)
         transfers_out = int(row.get('transfers_out_event', 0) or 0)
         net_transfers = transfers_in - transfers_out
         
-        predicted_delta = 0.0
-        if net_transfers > 75000:
-            predicted_delta = 0.1
-        elif net_transfers < -75000:
-            predicted_delta = -0.1
+        predicted_delta = 0.1 if net_transfers > 75000 else (-0.1 if net_transfers < -75000 else 0.0)
 
         player_obj = {
-            "id": row['id'],
-            "name": web_name,
-            "team": row.get('team_code', 'UNK'),
-            "pos_id": int(row.get('element_type', 3)),
-            "cost": cost_float,
-            "predicted_price_delta": predicted_delta, 
-            "own": global_own,
-            "top_10k_eo": round(top_10k_eo, 2),
-            "status": str(row.get('status', 'a')),
-            "ep_next": float(row.get('ep_next', 0.0) or 0.0),
-            "form": float(row.get('form', 0.0) or 0.0),
-            "xgi_90": combined_xgi,
-            "xgc_90": float(row.get('expected_goals_conceded_per_90', 1.35) or 1.35),
+            "id": row['id'], "name": web_name, "team": row.get('team_code', 'UNK'),
+            "pos_id": int(row.get('element_type', 3)), "cost": row['cost_float'],
+            "own": row['global_own'], "status": str(row.get('status', 'a')),
             "chance_of_playing_next_round": row.get('chance_of_playing_next_round'),
-            "age": int(row.get('age', 25) or 25),
-            "has_stale_pl_history": bool(row.get('has_stale_pl_history', False)),
-            "recent_european_peak": bool(row.get('recent_european_peak', False)),
-            "fb_mins": fb_mins 
+            "fb_mins": row['fb_mins']
         }
         
+        # xMins Hierarchy Resolution
         original_xmins = estimate_xmins(player_obj)
-        calculated_ev = get_ensemble_ev(player_obj)
-        
-        # --- Three-Tier xMins Hierarchy & Mathematical EV Scaling ---
-        final_xmins = original_xmins
-        if web_name in crowd_xmins_dict:
-            final_xmins = crowd_xmins_dict[web_name]
-        if web_name in custom_xmins_dict:
-            final_xmins = float(custom_xmins_dict[web_name])
+        final_xmins = custom_xmins_dict.get(web_name, crowd_xmins_dict.get(web_name, original_xmins))
 
-        if final_xmins != original_xmins:
-            if original_xmins > 0:
-                calculated_ev = calculated_ev * (final_xmins / original_xmins)
-            else:
-                calculated_ev = (combined_xgi * (final_xmins / 90.0)) + (2.0 * (final_xmins / 90.0))
-        
-        # FIX 3: Apply opponent matchup rating DIRECTLY to the final EV to bypass the Bayesian floor
-        opponent_def_rating = row.get('opponent_def_rating', 1.0)
-        calculated_ev = calculated_ev * opponent_def_rating
+        # Apply Matchup Multiplier & xMins Delta to ML output
+        calculated_ev = row['ml_base_ev'] * row['opponent_def_rating']
+        if final_xmins != original_xmins and original_xmins > 0:
+            calculated_ev = calculated_ev * (final_xmins / original_xmins)
         
         projections[pid] = {
             "ml_xmins": round(final_xmins, 1),
@@ -355,5 +365,5 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             "predicted_price_delta": predicted_delta         
         }
         
-    logger.info(f"Successfully generated projections for {len(projections)} players using rich math engine.")
+    logger.info(f"Successfully generated Tri-Model ML projections for {len(projections)} players.")
     return projections
