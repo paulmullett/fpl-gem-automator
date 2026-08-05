@@ -398,9 +398,9 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         crowd_val = crowd_xmins_dict.get(int(row['id']), crowd_xmins_dict.get(web_name, original_xmins))
         final_xmins = custom_xmins_dict.get(web_name, crowd_val)
 
+        # Base EV assumes a 90-minute appearance. Scale it linearly by the finalized xMins.
         calculated_ev = row['ml_base_ev'] * row['opponent_def_rating']
-        if final_xmins != original_xmins and original_xmins > 0:
-            calculated_ev = calculated_ev * (final_xmins / original_xmins)
+        calculated_ev = calculated_ev * (final_xmins / 90.0)
         
         projections[pid] = {
             "name": web_name,
