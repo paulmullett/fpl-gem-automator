@@ -394,13 +394,14 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
             calculated_ev = calculated_ev * (final_xmins / original_xmins)
         
         projections[pid] = {
+            "name": web_name,
             "ml_xmins": round(final_xmins, 1),
             "ml_ev_1gw": round(calculated_ev, 2),
             "ml_ev_8gw": round(calculated_ev * 8 * 0.95, 2),
-            "mc_floor_ev": round(calculated_ev * 0.6, 2),    
-            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),  
-            "top_10k_eo": round(top_10k_eo, 2),               
-            "predicted_price_delta": predicted_delta         
+            "mc_floor_ev": round(calculated_ev * 0.6, 2),
+            "mc_ceiling_ev": round(calculated_ev * 1.5, 2),
+            "top_10k_eo": round(top_10k_eo, 2),
+            "predicted_price_delta": predicted_delta
         }
         
     logger.info(f"Successfully generated Residual ML projections for {len(projections)} players.")
