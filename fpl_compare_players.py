@@ -25,8 +25,15 @@ from fpl_funcs import (
 from fpl_odds_engine import get_market_adjustments
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-PLAYER_A_INPUT = os.environ.get("PLAYER_A", "").strip()
-PLAYER_B_INPUT = os.environ.get("PLAYER_B", "").strip()
+PLAYER_COMPARE_INPUT = os.environ.get("PLAYER_COMPARE", "")
+# Parse comma-separated input from GitHub Actions
+if "," in PLAYER_COMPARE_INPUT:
+    parts = PLAYER_COMPARE_INPUT.split(",")
+    PLAYER_A_INPUT = parts[0].strip()
+    PLAYER_B_INPUT = parts[1].strip()
+else:
+    PLAYER_A_INPUT = os.environ.get("PLAYER_A", "").strip()
+    PLAYER_B_INPUT = os.environ.get("PLAYER_B", "").strip()
 RISK_POSTURE = os.environ.get("RISK_POSTURE", "NEUTRAL").upper()
 STATE_FILE_PATH = "fpl_state.json"
 
