@@ -5141,11 +5141,11 @@
     },
     "497": {
         "name": "Dubravka",
-        "ml_xmins": 1.0,
-        "ml_ev_1gw": 0.02,
-        "ml_ev_8gw": 0.14,
-        "mc_floor_ev": 0.01,
-        "mc_ceiling_ev": 0.03,
+        "ml_xmins": 0.0,
+        "ml_ev_1gw": 0.0,
+        "ml_ev_8gw": 0.0,
+        "mc_floor_ev": 0.0,
+        "mc_ceiling_ev": 0.0,
         "top_10k_eo": 24.3,
         "predicted_price_delta": 0.0
     },
