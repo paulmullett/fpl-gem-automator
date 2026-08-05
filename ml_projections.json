@@ -4211,11 +4211,11 @@
     },
     "411": {
         "name": "Haaland",
-        "ml_xmins": 89.0,
-        "ml_ev_1gw": 4.88,
-        "ml_ev_8gw": 37.12,
-        "mc_floor_ev": 2.91,
-        "mc_ceiling_ev": 7.35,
+        "ml_xmins": 25.0,
+        "ml_ev_1gw": 1.24,
+        "ml_ev_8gw": 9.4,
+        "mc_floor_ev": 0.25,
+        "mc_ceiling_ev": 2.47,
         "top_10k_eo": 119.84,
         "predicted_price_delta": 0.0
     },

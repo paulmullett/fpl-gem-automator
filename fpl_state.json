@@ -2,7 +2,8 @@
     "buyback_targets": {},
     "last_updated_gw": 1,
     "xmins_overrides": {
-        "497": 0.0
+        "497": 0.0,
+        "411": 25.0
     },
     "price_watchlist": {},
     "calibration_weights": {
@@ -12,8 +13,8 @@
     },
     "pending_evaluation": {
         "gw": 1,
-        "projected_xP": 46.22,
-        "captain": "Haaland"
+        "projected_xP": 43.8,
+        "captain": "Gabriel"
     },
     "performance_history": []
 }
