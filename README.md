@@ -1,6 +1,11 @@
 # FPL Quantitative Decision Engine & Tactical Audit Pipeline (2026/27 Season)
 
-An institutional-grade Fantasy Premier League (FPL) quantitative modeling suite. The pipeline integrates Mixed-Integer Linear Programming (MILP), an 8-Gameweek deep-tree horizon optimization engine, a Tri-Model Machine Learning Regressor suite (XGBoost, LightGBM, Random Forest), Monte Carlo stochastic risk modeling, live bookmaker odds intensity solvers, and Google Gemini AI orchestration to deliver automated, data-driven squad optimizations directly to Discord.
+An institutional-grade Fantasy Premier League (FPL) quantitative modeling suite. The pipeline fuses Mixed-Integer Linear Programming (MILP), an 8-Gameweek deep-tree horizon optimization engine, Monte Carlo stochastic risk modeling, live bookmaker odds intensity solvers, and Google Gemini AI orchestration to deliver automated, data-driven squad optimizations directly to Discord.
+
+## Acknowledgements & Academic Citations
+This project implements machine learning methodologies inspired by the OpenFPL forecasting framework. 
+* **Citation:** Groos, D. (2025). *OpenFPL: An open-source forecasting method rivaling state-of-the-art Fantasy Premier League services*. arXiv preprint arXiv:2508.09992.
+* **License Note:** Certain structural machine learning techniques herein are adapted from the OpenFPL methodology, originally distributed under the MIT License by Daniel Groos.
 
 ---
 
