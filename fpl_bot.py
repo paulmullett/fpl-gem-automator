@@ -475,7 +475,7 @@ def get_fpl_data():
     for pid in starter_candidates:
         p = players[pid]
         pid_str = str(p["id"])
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else p.get("ml_xmins", estimate_xmins(p))
         p_z = 1.0 / (1.0 + math.exp(0.1 * (xmins - 35.0)))
         p_zero_mins.append(p_z)
         
@@ -577,7 +577,7 @@ def get_fpl_data():
         is_cap = " (C)" if cap and p["id"] == cap["id"] else ""
         is_vice = " (VC)" if vice and p["id"] == vice["id"] else ""
         pid_str = str(p["id"])
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else p.get("ml_xmins", estimate_xmins(p))
         actual_ev = round(ev_matrix[p["id"]][0], 2)
         pos_str = f"{p['pos']}:"
         name_team = f"{p['name']} ({p['team']})"
@@ -590,7 +590,7 @@ def get_fpl_data():
     for i, p in enumerate(bench_gk + bench_outfield):
         prefix = "GK:" if p["pos_id"] == 1 else f"S{i}:"
         pid_str = str(p["id"])
-        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else estimate_xmins(p)
+        xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else p.get("ml_xmins", estimate_xmins(p))
         actual_ev = round(ev_matrix[p["id"]][0], 2)
         name_team = f"{p['name']} ({p['team']})"
         squad_lines.append(f"{prefix:<4} {name_team:<22} | £{p['cost']:>4.1f}m | {xmins:>4.1f} xMins | {actual_ev:>4.2f} EV")
