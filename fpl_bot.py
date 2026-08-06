@@ -31,7 +31,7 @@ from fpl_funcs import (
 from fpl_odds_engine import get_market_adjustments
 from fpl_mpo_engine import solve_multi_period_model
 
-# 1. Environment & Pre-Flight Check
+# Environment & Pre-Flight Check
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 FPL_TEAM_ID = os.environ.get("FPL_TEAM_ID")
@@ -93,13 +93,13 @@ SECTION 1: EXECUTIVE SUMMARY & CORE MOVES
 ================================================================================
                     MATHEMATICALLY LOCKED SQUAD (X-X-X)
 ================================================================================
-                                [Raya (4.03)]
+                               [Raya (4.03)]
 
-     [Calafiori (4.59)]  [Gabriel (4.61)]  [Dalot (3.34)]  [O'Reilly (4.24)]
+               [Calafiori (4.59)] [Gabriel (4.61)] [Dalot (3.34)] [O'Reilly (4.24)]
 
-  [Estêvão (3.86)] [Maddison (4.28)] [Enzo (3.93)] [Cherki (4.39)] [Ngumoha (3.58)]
+            [Estêvão (3.86)] [Maddison (4.28)] [Enzo (3.93)] [Cherki (4.39)] [Ngumoha (3.58)]
 
-                               [Haaland (5.63)]
+                              [Haaland (5.63)]
 ================================================================================
 BENCH: [GK] Kinsky (3.38) | [S1] Zirkzee (2.95) | [S2] Beto (3.07) | [S3] Cash (3.01)
 ================================================================================
@@ -150,15 +150,43 @@ def load_state():
                 return saved_state
         except Exception as e:
             print(f"WARNING: Error reading state file: {e}")
-    return default_state
+            return default_state
 
 def save_state(state):
     try:
         with open(STATE_FILE_PATH, "w") as f:
             json.dump(state, f, indent=4)
-        print("STATE ENGINE: Successfully saved updated strategy state to fpl_state.json")
+            print("STATE ENGINE: Successfully saved updated strategy state to fpl_state.json")
     except Exception as e:
         print(f"ERROR: Failed to save state file: {e}")
+
+def get_available_chips(target_gw, headers):
+    """
+    Fetches the user's played chips from the FPL API and calculates 
+    inventory based on the 8-chip (half-season reset) rule.
+    """
+    available = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
+    try:
+        resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            history_data = resp.json()
+            played_chips = history_data.get("chips", [])
+            
+            half_played = []
+            for c in played_chips:
+                if target_gw <= 19 and c["event"] <= 19:
+                    half_played.append(c["name"])
+                elif target_gw > 19 and c["event"] > 19:
+                    half_played.append(c["name"])
+            
+            available["wildcard"] = "wildcard" not in half_played
+            available["freehit"] = "freehit" not in half_played
+            available["bboost"] = "bboost" not in half_played
+            available["3xc"] = "3xc" not in half_played
+    except Exception as e:
+        print(f"WARNING: Could not fetch FPL chip history: {e}")
+        
+    return available
 
 def recalibrate_model(state, headers, active_gw):
     pending = state.get("pending_evaluation")
@@ -202,7 +230,7 @@ def get_live_fpl_news():
         crellin_results = DDGS().text("Ben Crellin FPL blank double gameweek updates", max_results=3, timelimit='w')
         news_text += "--- SCHEDULE CHANGES (Ben Crellin) ---\n"
         for r in crellin_results: news_text += f"- {r.get('body', '')}\n"
-            
+        
         dinnery_results = DDGS().text("Ben Dinnery FPL injuries team news press conference", max_results=3, timelimit='w')
         news_text += "\n--- INJURY UPDATES (Ben Dinnery) ---\n"
         for r in dinnery_results: news_text += f"- {r.get('body', '')}\n"
@@ -214,7 +242,7 @@ def get_live_fpl_news():
         leak_results = DDGS().text("FPL late team news leaks traveling squad omitted", max_results=3, timelimit='d')
         news_text += "\n--- SQUAD OMISSIONS & LEAKS ---\n"
         for r in leak_results: news_text += f"- {r.get('body', '')}\n"
-            
+        
     except Exception as e:
         news_text += f"[Search tool failed to retrieve live data: {e}]\n"
     return news_text
@@ -225,37 +253,6 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
         if p["team"] in UEFA_TEAMS:
             flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion.]")
     return flags
-
-def get_available_chips(target_gw, headers):
-    """
-    Fetches the user's played chips from the FPL API and calculates 
-    inventory based on the 8-chip (half-season reset) rule.
-    """
-    available = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
-    try:
-        resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers, timeout=10)
-        if resp.status_code == 200:
-            history_data = resp.json()
-            played_chips = history_data.get("chips", [])
-            
-            # Segregate chips played in GW 1-19 vs GW 20-38
-            half_played = []
-            for c in played_chips:
-                # First-half evaluation
-                if target_gw <= 19 and c["event"] <= 19:
-                    half_played.append(c["name"])
-                # Second-half evaluation
-                elif target_gw > 19 and c["event"] > 19:
-                    half_played.append(c["name"])
-            
-            available["wildcard"] = "wildcard" not in half_played
-            available["freehit"] = "freehit" not in half_played
-            available["bboost"] = "bboost" not in half_played
-            available["3xc"] = "3xc" not in half_played
-    except Exception as e:
-        print(f"WARNING: Could not fetch FPL chip history: {e}")
-        
-    return available
 
 def get_fpl_data():
     print("Fetching live market odds for tactical alignment...")
@@ -280,13 +277,12 @@ def get_fpl_data():
     state["last_updated_gw"] = target_gw
     weights = state["calibration_weights"]
 
-    # Load ML Projections payload before normalizing players
     ml_proj_data = {}
     if os.path.exists("ml_projections.json"):
         try:
             with open("ml_projections.json", "r") as f:
                 ml_proj_data = json.load(f)
-                print("SUCCESS: Loaded local projections from ml_projections.json")
+            print("SUCCESS: Loaded local projections from ml_projections.json")
         except Exception as e:
             print(f"WARNING: Could not read ml_projections.json: {e}")
 
@@ -295,7 +291,6 @@ def get_fpl_data():
     for raw_p in bootstrap_data.get("elements", []):
         p = normalize_player(raw_p, teams, element_types)
         
-        # Attach ML Projections and Monte Carlo bounds if available
         pid_str = str(p["id"])
         if pid_str in ml_proj_data:
             p["ml_xmins"] = float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p)))
@@ -303,7 +298,7 @@ def get_fpl_data():
             p["mc_ceiling_ev"] = float(ml_proj_data[pid_str].get("mc_ceiling_ev", 0.0))
         else:
             p["ml_xmins"] = estimate_xmins(p)
-            
+        
         players[p["id"]] = p
         if p.get("has_stale_pl_history") or p.get("total_points", 0) == 0:
             new_arrivals.append(f"- {p['name']} ({p['team']})")
@@ -315,8 +310,6 @@ def get_fpl_data():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
     market_str = "Market data & live price deltas initialized."
 
-    # Sole method of forcing minute overrides: Explicit Human-in-the-Loop input
-    # --- HUMAN-IN-THE-LOOP (HITL) GATEKEEPER ---
     if XMINS_INPUT and XMINS_INPUT.strip():
         print(f"Processing Human Oracle Input: {XMINS_INPUT}")
         parsed_overrides = {}
@@ -333,7 +326,6 @@ def get_fpl_data():
             name_lower = str(name_part).strip().lower()
             match_found = False
             
-            # First Pass: Exact 'web_name' match (Safest)
             for pid, p in players.items():
                 if p.get("name", "").lower() == name_lower:
                     xmins_overrides[str(pid)] = target_mins
@@ -343,7 +335,6 @@ def get_fpl_data():
                     match_found = True
                     break
             
-            # Second Pass: Substring match if exact fails
             if not match_found:
                 for pid, p in players.items():
                     if name_lower in p.get("name", "").lower():
@@ -358,7 +349,7 @@ def get_fpl_data():
         print("No Human Oracle Input provided. Resetting state overrides to clean baseline.")
         xmins_overrides = {}
         state["xmins_overrides"] = {}
-    
+        
     current_squad_ids = []
     bank = 0.0
     total_liquid_budget = 100.0
@@ -366,21 +357,19 @@ def get_fpl_data():
 
     if target_gw > 1:
         try:
-          team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
-          if team_resp.status_code == 200:
-            team_data = team_resp.json()
-            current_squad_ids = []
-            
-            for pick in team_data.get("picks", []):
-                pid = pick["element"]
-                current_squad_ids.append(pid)
-                # Overwrite the base cost with exact FPL selling value for currently owned players
-                if pid in players:
-                    players[pid]["selling_price"] = pick.get("selling_price", players[pid]["cost"] * 10) / 10.0
+            team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
+            if team_resp.status_code == 200:
+                team_data = team_resp.json()
+                current_squad_ids = []
+                for pick in team_data.get("picks", []):
+                    pid = pick["element"]
+                    current_squad_ids.append(pid)
+                    if pid in players:
+                        players[pid]["selling_price"] = pick.get("selling_price", players[pid]["cost"] * 10) / 10.0
 
-            entry_history = team_data.get("entry_history", {})
-            bank = entry_history.get("bank", 0) / 10.0
-            total_liquid_budget = entry_history.get("value", 1000) / 10.0
+                entry_history = team_data.get("entry_history", {})
+                bank = entry_history.get("bank", 0) / 10.0
+                total_liquid_budget = entry_history.get("value", 1000) / 10.0
         except Exception as e:
             print(f"WARNING: Could not fetch squad for team {FPL_TEAM_ID}: {e}")
 
@@ -402,7 +391,7 @@ def get_fpl_data():
         fixtures_data = fixtures_resp.json() if fixtures_resp.status_code == 200 else []
     except Exception:
         fixtures_data = []
-        
+    
     team_fdr_sum = {t: 0 for t in teams.keys()}
     team_fdr_count = {t: 0 for t in teams.keys()}
     for f in fixtures_data:
@@ -415,11 +404,10 @@ def get_fpl_data():
             if team_h in team_fdr_sum:
                 team_fdr_sum[team_h] += f.get("team_h_difficulty", 3)
                 team_fdr_count[team_h] += 1
-                
+    
     team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
 
     team_gw_opponents = {t_id: [[] for _ in range(8)] for t_id in teams.keys()}
-    
     for f in fixtures_data:
         event = f.get("event")
         if event and target_gw <= event < target_gw + 8:
@@ -441,11 +429,9 @@ def get_fpl_data():
         pid_str = str(pid)
         pos_id = p.get("pos_id", 3)
 
-        # TIER 1: Use 8-GW ML Projection Matrix if available
         if pid_str in ml_proj_data and "ml_ev_matrix" in ml_proj_data[pid_str]:
             raw_ml_evs = list(ml_proj_data[pid_str]["ml_ev_matrix"])
             
-            # Check for immediate Human Oracle xMins override in fpl_bot.py for GW1
             if pid_str in xmins_overrides:
                 target_xmins = float(xmins_overrides[pid_str])
                 orig_xmins = float(ml_proj_data[pid_str].get("ml_xmins", 90.0))
@@ -458,7 +444,6 @@ def get_fpl_data():
                 gw1_override_ev = app_ev + attacking_ev
                 raw_ml_evs = [gw1_override_ev] + raw_ml_evs[1:]
 
-            # Apply Risk Posture adjustments to the 8-GW EV matrix
             for t in range(min(8, len(raw_ml_evs))):
                 ev_val = float(raw_ml_evs[t])
                 sigma = ev_val * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30))
@@ -468,7 +453,6 @@ def get_fpl_data():
                     ev_val += (sigma * 0.15)
                 ev_matrix[pid][t] = max(0.0, ev_val)
 
-        # TIER 2 / FAILSAFE: Native Heuristic Generation with Fixture Multipliers
         else:
             base_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
             sigma = base_ev * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30))
@@ -499,7 +483,6 @@ def get_fpl_data():
                         raw_multiplier = ((opp_xgc * ha_factor) / 1.50)
                     
                     raw_multiplier = max(0.65, min(1.35, raw_multiplier))
-                    
                     horizon_decay = 0.95 ** t
                     final_multiplier = (raw_multiplier * horizon_decay) + (1.0 * (1.0 - horizon_decay))
                     
@@ -517,7 +500,7 @@ def get_fpl_data():
         xmins = float(xmins_overrides[pid_str]) if pid_str in xmins_overrides else p.get("ml_xmins", estimate_xmins(p))
         p_z = 1.0 / (1.0 + math.exp(0.1 * (xmins - 35.0)))
         p_zero_mins.append(p_z)
-        
+    
     p_0 = 1.0
     for p_z in p_zero_mins: p_0 *= (1.0 - p_z)
     
@@ -527,11 +510,10 @@ def get_fpl_data():
         for j, p_other in enumerate(p_zero_mins):
             if i != j: term *= (1.0 - p_other)
         p_1 += term
-        
+    
     dynamic_w_sub_1 = round(max(0.04, min(0.30, 1.0 - p_0)), 3)
     dynamic_w_sub_2 = round(max(0.01, min(0.15, 1.0 - p_0 - p_1)), 3)
 
-    # Fetch real-time chip inventory
     available_chips = get_available_chips(target_gw, headers)
 
     optimal_squad, transfer_plan = solve_multi_period_model(
@@ -542,9 +524,12 @@ def get_fpl_data():
     )
 
     if not optimal_squad or len(optimal_squad) < 15:
-        sorted_all = sorted([p for p in players.values() if p.get("status") in ["a", "d", ""]], 
-                            key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-        optimal_squad = sorted_all[:15]
+        valid_players = [p for p in players.values() if p.get("status") in ["a", "d", ""]]
+        gks = sorted([p for p in valid_players if p["pos_id"] == 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+        defs = sorted([p for p in valid_players if p["pos_id"] == 2], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+        mids = sorted([p for p in valid_players if p["pos_id"] == 3], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+        fwds = sorted([p for p in valid_players if p["pos_id"] == 4], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
+        optimal_squad = gks[:2] + defs[:5] + mids[:5] + fwds[:3]
 
     sub_prob = pulp.LpProblem("Phase2_StartingXI", pulp.LpMaximize)
     s_vars = pulp.LpVariable.dicts("s", [p["id"] for p in optimal_squad], cat="Binary")
@@ -556,23 +541,21 @@ def get_fpl_data():
         ev_1gw = ev_matrix[p["id"]][0]
         ownership = p.get("own", 0.0) / 100.0
         rank_gravity = (ev_1gw * (ownership ** 2) * 1.50) if RISK_POSTURE == "SHIELD" else (
-                       -(ev_1gw * ownership * 0.50) if RISK_POSTURE == "CHASE" else 
-                       (ev_1gw * (ownership ** 2) * 0.75))
+            -(ev_1gw * ownership * 0.50) if RISK_POSTURE == "CHASE" else 
+            (ev_1gw * (ownership ** 2) * 0.75))
         sub_objective.append((ev_1gw * s_vars[p["id"]]) + ((ev_1gw * cap_mult + rank_gravity) * c_vars[p["id"]]))
-        
+    
     sub_prob += pulp.lpSum(sub_objective)
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad]) == 11
     sub_prob += pulp.lpSum([c_vars[p["id"]] for p in optimal_squad]) == 1
     for p in optimal_squad: sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
-            
+    
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 1]) == 1
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) >= 3
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) <= 4
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 3]) >= 3
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 4]) >= 1
 
-    
-    
     sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
     
     starters, bench = [], []
@@ -582,9 +565,8 @@ def get_fpl_data():
             starters.append(p)
             if c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5: cap = p
         else: bench.append(p)
-            
-    starters.sort(key=lambda x: x["pos_id"])
     
+    starters.sort(key=lambda x: x["pos_id"])
     starters_sorted_by_1gw = sorted(starters, key=lambda x: ev_matrix[x["id"]][0], reverse=True)
     vice = next((p for p in starters_sorted_by_1gw if not cap or (p["id"] != cap["id"] and p["team_id"] != cap["team_id"])), starters_sorted_by_1gw[0])
     
@@ -596,7 +578,7 @@ def get_fpl_data():
     if cap:
         cap_mult = 2.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 1.0
         projected_starting_xP += (ev_matrix[cap["id"]][0] * (cap_mult - 1.0))
-        
+    
     state["pending_evaluation"] = {
         "gw": target_gw, "projected_xP": round(projected_starting_xP, 2), "captain": cap["name"] if cap else None
     }
@@ -608,7 +590,7 @@ def get_fpl_data():
     squad_lines = [
         "```text",
         "================================================================================",
-        "                       FINAL LOCKED-IN SQUAD SUMMARY",
+        " FINAL LOCKED-IN SQUAD SUMMARY",
         "================================================================================",
         f"GW{target_gw} Formation: {formation:<5} | Liquid Value: £{total_liquid_budget:<5.1f}m | Bank: £{bank:<4.1f}m",
         f"Captain (C): {cap['name'] if cap else 'N/A'} ({cap['team'] if cap else ''}) | Vice-Captain (VC): {vice['name'] if vice else 'N/A'} ({vice['team'] if vice else ''})",
@@ -625,7 +607,7 @@ def get_fpl_data():
         pos_str = f"{p['pos']}:"
         name_team = f"{p['name']} ({p['team']})"
         squad_lines.append(f"{pos_str:<4} {name_team:<22} | £{p['cost']:>4.1f}m | {xmins:>4.1f} xMins | {actual_ev:>4.2f} EV{is_cap}{is_vice}")
-        
+    
     squad_lines.extend(["", "BENCH ORDER:"])
     bench_gk = [p for p in bench if p["pos_id"] == 1]
     bench_outfield = sorted([p for p in bench if p["pos_id"] != 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
@@ -637,11 +619,11 @@ def get_fpl_data():
         actual_ev = round(ev_matrix[p["id"]][0], 2)
         name_team = f"{p['name']} ({p['team']})"
         squad_lines.append(f"{prefix:<4} {name_team:<22} | £{p['cost']:>4.1f}m | {xmins:>4.1f} xMins | {actual_ev:>4.2f} EV")
-        
+    
     squad_lines.extend([
         "",
         "================================================================================",
-        "                         MULTI-PERIOD TRANSFER TREE",
+        " MULTI-PERIOD TRANSFER TREE",
         "================================================================================"
     ])
     
@@ -649,11 +631,11 @@ def get_fpl_data():
         for tp in transfer_plan: squad_lines.append(f"• {tp}")
     else:
         squad_lines.append("• GW1: Hold / Bank Transfer (Unlimited pre-season allocation locked)")
-        
+    
     chip_recommendations = evaluate_chip_thresholds(starters, bench, ev_matrix, ACTIVE_CHIP)
     squad_lines.extend([
         "================================================================================",
-        "                    ALGORITHMIC CHIP RECOMMENDATIONS",
+        " ALGORITHMIC CHIP RECOMMENDATIONS",
         "================================================================================"
     ])
     for rec in chip_recommendations: squad_lines.append(f"• {rec}")
@@ -669,12 +651,12 @@ def get_fpl_data():
 
     squad_lines.extend([
         "================================================================================",
-        "                    SQUAD HEALTH & VARIANCE REPORT",
+        " SQUAD HEALTH & VARIANCE REPORT",
         "================================================================================",
         f"• 1-GW Expected Yield (Odds-Adjusted): {projected_starting_xP:>6.2f} pts",
-        f"• 8-GW Deep-Tree Horizon xP:           {macro_squad_8gw_xp:>6.2f} pts",
-        f"• Stochastic 10th Percentile Floor:    {starter_floor:>6.1f} pts",
-        f"• Stochastic 90th Percentile Ceiling:  {starter_ceiling:>6.1f} pts",
+        f"• 8-GW Deep-Tree Horizon xP: {macro_squad_8gw_xp:>6.2f} pts",
+        f"• Stochastic 10th Percentile Floor: {starter_floor:>6.1f} pts",
+        f"• Stochastic 90th Percentile Ceiling: {starter_ceiling:>6.1f} pts",
         "================================================================================",
         "```"
     ])
@@ -684,7 +666,7 @@ def get_fpl_data():
     return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
 
 def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
-    gw1_override = "\n    6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
+    gw1_override = "\n 6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
 
     if WORKFLOW_INPUT == "post_gameweek_review":
         action_type = "Post-Gameweek Strategic Review & Market Volatility Audit"
@@ -712,16 +694,16 @@ def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, 
     )
 
     return f"""
-    Run {action_type} for Gameweek {target_gw}.
-    
-    ### CURRENT SOLVER STATE & ECONOMICS: Bank: £{bank}m | Saved Transfers: {free_transfers}
-    ### NEW ARRIVALS & FOREIGN TRANSFERS:\n{new_arrivals_str}
-    ### ACTIVE 2026/27 MARKET WATCHLIST:\n{market_str}\n{live_news}
-    ### DATA INSTRUCTIONS:\n{focus_instructions}{gw1_override}
+ Run {action_type} for Gameweek {target_gw}.
+ 
+ ### CURRENT SOLVER STATE & ECONOMICS: Bank: £{bank}m | Saved Transfers: {free_transfers}
+ ### NEW ARRIVALS & FOREIGN TRANSFERS:\n{new_arrivals_str}
+ ### ACTIVE 2026/27 MARKET WATCHLIST:\n{market_str}\n{live_news}
+ ### DATA INSTRUCTIONS:\n{focus_instructions}{gw1_override}
 
-    ### MATHEMATICALLY LOCKED SQUAD PAYLOAD (INSERT VERBATIM AT END OF RESPONSE):
-    \n{locked_squad_str}\n
-    """
+ ### MATHEMATICALLY LOCKED SQUAD PAYLOAD (INSERT VERBATIM AT END OF RESPONSE):
+ \n{locked_squad_str}\n
+ """
 
 def send_to_discord(webhook_url, text):
     chunks, current_chunk = [], ""
@@ -750,7 +732,7 @@ def main():
     except Exception as e:
         print(f"CRITICAL ERROR generating content with Gemini: {str(e)}")
         sys.exit(1)
-        
+    
     content = response.text if response and response.text else ""
     if not content: sys.exit(1)
 
