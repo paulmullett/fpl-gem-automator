@@ -399,65 +399,74 @@ def get_fpl_data():
         if p.get("status") not in ["a", "d", ""]: continue
         
         t_id = p["team_id"]
-        
         pid_str = str(pid)
-        if pid_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid_str] and float(ml_proj_data[pid_str]["ml_ev_1gw"]) > 0:
-            base_ml_ev = float(ml_proj_data[pid_str]["ml_ev_1gw"])
+        pos_id = p.get("pos_id", 3)
+
+        # TIER 1: Use 8-GW ML Projection Matrix if available
+        if pid_str in ml_proj_data and "ml_ev_matrix" in ml_proj_data[pid_str]:
+            raw_ml_evs = list(ml_proj_data[pid_str]["ml_ev_matrix"])
             
-            # If an explicit Human Oracle xMins override exists in fpl_bot.py, recalculate non-linearly
+            # Check for immediate Human Oracle xMins override in fpl_bot.py for GW1
             if pid_str in xmins_overrides:
                 target_xmins = float(xmins_overrides[pid_str])
                 orig_xmins = float(ml_proj_data[pid_str].get("ml_xmins", 90.0))
+                base_ml_ev = float(ml_proj_data[pid_str].get("ml_ev_1gw", raw_ml_evs[0]))
                 
                 prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (target_xmins - 60.0)))
                 app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
-                
                 attacking_ev = max(0.0, base_ml_ev - 2.0) * (target_xmins / max(1.0, orig_xmins))
-                heuristic_ev = app_ev + attacking_ev
-            else:
-                heuristic_ev = base_ml_ev
+                
+                gw1_override_ev = app_ev + attacking_ev
+                raw_ml_evs = [gw1_override_ev] + raw_ml_evs[1:]
+
+            # Apply Risk Posture adjustments to the 8-GW EV matrix
+            for t in range(min(8, len(raw_ml_evs))):
+                ev_val = float(raw_ml_evs[t])
+                sigma = ev_val * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30))
+                if RISK_POSTURE == "SHIELD":
+                    ev_val -= (sigma * 0.15)
+                elif RISK_POSTURE == "CHASE":
+                    ev_val += (sigma * 0.15)
+                ev_matrix[pid][t] = max(0.0, ev_val)
+
+        # TIER 2 / FAILSAFE: Native Heuristic Generation with Fixture Multipliers
         else:
-            heuristic_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)            
-
-        ev_matrix[pid][0] = heuristic_ev
-        base_ev = ev_matrix[pid][0]
-
-        pos_id = p.get("pos_id", 3)
-        sigma = base_ev * (0.45 if pos_id == 3 else (0.4 if pos_id == 4 else 0.3))
-        if RISK_POSTURE == "SHIELD": base_ev -= (sigma * 0.15)
-        elif RISK_POSTURE == "CHASE": base_ev += (sigma * 0.15)
+            base_ev = get_ensemble_ev(p, xmins_overrides, market_data, weights, RISK_POSTURE)
+            sigma = base_ev * (0.45 if pos_id == 3 else (0.40 if pos_id == 4 else 0.30))
+            if RISK_POSTURE == "SHIELD": base_ev -= (sigma * 0.15)
+            elif RISK_POSTURE == "CHASE": base_ev += (sigma * 0.15)
             
-        for t in range(0, 8):
-            gw_opponents = team_gw_opponents[t_id][t]
-            if not gw_opponents:
-                ev_matrix[pid][t] = 0.0
-                continue
+            for t in range(0, 8):
+                gw_opponents = team_gw_opponents[t_id][t]
+                if not gw_opponents:
+                    ev_matrix[pid][t] = 0.0
+                    continue
                 
-            gw_ev_total = 0.0
-            for opp_data in gw_opponents:
-                opp_id = opp_data["opp"]
-                is_home = opp_data["is_home"]
-                opp_name = teams.get(opp_id, "")
+                gw_ev_total = 0.0
+                for opp_data in gw_opponents:
+                    opp_id = opp_data["opp"]
+                    is_home = opp_data["is_home"]
+                    opp_name = teams.get(opp_id, "")
+                    
+                    opp_metrics = market_data.get(opp_name, {})
+                    opp_xg = opp_metrics.get("xG", _safe_float(p.get("xgc_90"), 1.50))
+                    opp_xgc = opp_metrics.get("xGC", _safe_float(p.get("xgi_90"), 1.50))
+                    
+                    ha_factor = 1.05 if is_home else 0.95
+                    
+                    if pos_id in [1, 2]: 
+                        raw_multiplier = (1.50 / max(0.50, opp_xg * ha_factor))
+                    else: 
+                        raw_multiplier = ((opp_xgc * ha_factor) / 1.50)
+                    
+                    raw_multiplier = max(0.65, min(1.35, raw_multiplier))
+                    
+                    horizon_decay = 0.95 ** t
+                    final_multiplier = (raw_multiplier * horizon_decay) + (1.0 * (1.0 - horizon_decay))
+                    
+                    gw_ev_total += base_ev * final_multiplier
                 
-                opp_metrics = market_data.get(opp_name, {})
-                opp_xg = opp_metrics.get("xG", _safe_float(p.get("xgc_90"), 1.50))
-                opp_xgc = opp_metrics.get("xGC", _safe_float(p.get("xgi_90"), 1.50))
-                
-                ha_factor = 1.05 if is_home else 0.95
-                
-                if pos_id in [1, 2]: 
-                    raw_multiplier = (1.50 / max(0.50, opp_xg * ha_factor))
-                else: 
-                    raw_multiplier = ((opp_xgc * ha_factor) / 1.50)
-                
-                raw_multiplier = max(0.65, min(1.35, raw_multiplier))
-                
-                horizon_decay = 0.95 ** t
-                final_multiplier = (raw_multiplier * horizon_decay) + (1.0 * (1.0 - horizon_decay))
-                
-                gw_ev_total += base_ev * final_multiplier
-                
-            ev_matrix[pid][t] = max(0.0, gw_ev_total)
+                ev_matrix[pid][t] = max(0.0, gw_ev_total)
 
     starter_candidates = sorted([p for p in valid_ids if players[p].get("cost", 0) >= 5.0], 
                                 key=lambda x: ev_matrix[x][0], reverse=True)[:11]
