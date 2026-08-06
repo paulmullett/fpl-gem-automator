@@ -366,8 +366,8 @@ def get_fpl_data():
 
     if target_gw > 1:
         try:
-            team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
-            if team_resp.status_code == 200:
+          team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
+          if team_resp.status_code == 200:
             team_data = team_resp.json()
             current_squad_ids = []
             
