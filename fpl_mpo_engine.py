@@ -139,12 +139,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             objective_terms.append(t_weight * base_ev * s[pid, t])
             objective_terms.append(t_weight * base_ev * c[pid, t])
 
-        tc_cap = pulp.LpVariable.dicts(f"tc_cap_{t}", valid_pids, cat="Binary")
+        # Mathematically bounded Triple Captain Multiplier
+        tc_cap = pulp.LpVariable.dicts(f"tc_cap_{t}", valid_pids, lowBound=0.0, upBound=1.0, cat="Continuous")
         for pid in valid_pids:
             prob += tc_cap[pid] <= c[pid, t]
             prob += tc_cap[pid] <= y_tc[t]
             prob += tc_cap[pid] >= c[pid, t] + y_tc[t] - 1
-            objective_terms.append(t_weight * adjusted_evs[pid] * tc_cap[pid])
+            # Only add to objective if the base EV is positive to prune branches
+            if adjusted_evs[pid] > 0:
+                objective_terms.append(t_weight * adjusted_evs[pid] * tc_cap[pid])
 
         if not (t == 0 and (target_gw == 1 or str(free_transfers).lower() in ["unlimited", "999"])):
             hit_cost = pulp.LpVariable(f"hit_cost_{t}", lowBound=0.0, cat="Continuous")
@@ -154,12 +157,14 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             prob += hit_cost >= 4.0 * (trans_sum - free_tf_val) - (100.0 * y_wc[t])
             objective_terms.append(-hit_cost)
 
-        bb_active = pulp.LpVariable.dicts(f"bb_active_{t}", valid_pids, cat="Binary")
+        # Mathematically bounded Bench Boost Integration
+        bb_active = pulp.LpVariable.dicts(f"bb_active_{t}", valid_pids, lowBound=0.0, upBound=1.0, cat="Continuous")
         for pid in valid_pids:
-            prob += bb_active[pid] <= (x[pid, t] - s[pid, t])
+            prob += bb_active[pid] <= x[pid, t] - s[pid, t]
             prob += bb_active[pid] <= y_bb[t]
             prob += bb_active[pid] >= (x[pid, t] - s[pid, t]) + y_bb[t] - 1
-            objective_terms.append(adjusted_evs[pid] * bb_active[pid] * t_weight)
+            if adjusted_evs[pid] > 0:
+                objective_terms.append(adjusted_evs[pid] * bb_active[pid] * t_weight)
 
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids) == 15
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids) == 11
