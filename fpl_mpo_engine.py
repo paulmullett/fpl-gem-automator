@@ -262,15 +262,22 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     prob += pulp.lpSum(objective_terms)
 
     try:
-        prob.solve(pulp.HiGHS_CMD(msg=False, timeLimit=30))
+        prob.solve(pulp.HiGHS_CMD(msg=False, timeLimit=90))
     except Exception as e:
         logger.warning(f"HiGHS solver not available ({e}), falling back to CBC.")
-        prob.solve(pulp.PULP_CBC_CMD(msg=False))
+        prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=90))
 
     optimal_squad = []
     transfer_plan = []
 
-    if prob.status == pulp.LpStatusOptimal:
+    def has_feasible_squad():
+        try:
+            return sum(1 for pid in valid_pids if x[pid, 0].varValue and x[pid, 0].varValue > 0.5) == 15
+        except Exception:
+            return False
+
+    # Accept strictly Optimal OR a Time Limit halt (NotOptimal) that successfully found a 15-man squad
+    if prob.status in [pulp.LpStatusOptimal, pulp.LpStatusNotOptimal] and has_feasible_squad():
         for pid in valid_pids:
             if x[pid, 0].varValue and x[pid, 0].varValue > 0.5:
                 p_copy = dict(players[pid])

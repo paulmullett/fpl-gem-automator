@@ -370,7 +370,7 @@ def get_fpl_data():
         
         pid_str = str(p["id"])
         if pid_str in ml_proj_data:
-            p["ml_xmins"] = float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p)))
+            p["ml_xmins"] = min(90.0, float(ml_proj_data[pid_str].get("ml_xmins", estimate_xmins(p))))
             p["mc_floor_ev"] = float(ml_proj_data[pid_str].get("mc_floor_ev", 0.0))
             p["mc_ceiling_ev"] = float(ml_proj_data[pid_str].get("mc_ceiling_ev", 0.0))
         else:
@@ -405,20 +405,22 @@ def get_fpl_data():
             
             for pid, p in players.items():
                 if p.get("name", "").lower() == name_lower:
-                    xmins_overrides[str(pid)] = target_mins
-                    p["xmins"] = target_mins
-                    p["ml_xmins"] = target_mins
-                    print(f" -> ORACLE OVERRIDE LOCKED: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                    clamped_mins = min(90.0, float(target_mins))
+                    xmins_overrides[str(pid)] = clamped_mins
+                    p["xmins"] = clamped_mins
+                    p["ml_xmins"] = clamped_mins
+                    print(f" -> ORACLE OVERRIDE LOCKED: {p['name']} ({p['team']}) set to {clamped_mins} mins.")
                     match_found = True
                     break
             
             if not match_found:
                 for pid, p in players.items():
                     if name_lower in p.get("name", "").lower():
-                        xmins_overrides[str(pid)] = target_mins
-                        p["xmins"] = target_mins
-                        p["ml_xmins"] = target_mins
-                        print(f" -> ORACLE FUZZY OVERRIDE: {p['name']} ({p['team']}) set to {target_mins} mins.")
+                        clamped_mins = min(90.0, float(target_mins))
+                        xmins_overrides[str(pid)] = clamped_mins
+                        p["xmins"] = clamped_mins
+                        p["ml_xmins"] = clamped_mins
+                        print(f" -> ORACLE FUZZY OVERRIDE: {p['name']} ({p['team']}) set to {clamped_mins} mins.")
                         break
 
         state["xmins_overrides"] = xmins_overrides

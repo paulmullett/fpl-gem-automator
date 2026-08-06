@@ -451,7 +451,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
         # Calculate 8 distinct Expected Values across the horizon
         for t in range(8):
-            target_xmins = float(raw_xmins_list[t])
+            target_xmins = min(90.0, float(raw_xmins_list[t]))
             
             # Piecewise Non-Linear EV Scaling
             prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (target_xmins - 60.0)))
