@@ -226,6 +226,37 @@ def check_european_congestion_flags(starters, fixtures_data, target_gw):
             flags.append(f"[FLAG OPTION: European Turnaround Risk detected for {p['name']} ({p['team']}) due to mid-week fixture congestion.]")
     return flags
 
+def get_available_chips(target_gw, headers):
+    """
+    Fetches the user's played chips from the FPL API and calculates 
+    inventory based on the 8-chip (half-season reset) rule.
+    """
+    available = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
+    try:
+        resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers, timeout=10)
+        if resp.status_code == 200:
+            history_data = resp.json()
+            played_chips = history_data.get("chips", [])
+            
+            # Segregate chips played in GW 1-19 vs GW 20-38
+            half_played = []
+            for c in played_chips:
+                # First-half evaluation
+                if target_gw <= 19 and c["event"] <= 19:
+                    half_played.append(c["name"])
+                # Second-half evaluation
+                elif target_gw > 19 and c["event"] > 19:
+                    half_played.append(c["name"])
+            
+            available["wildcard"] = "wildcard" not in half_played
+            available["freehit"] = "freehit" not in half_played
+            available["bboost"] = "bboost" not in half_played
+            available["3xc"] = "3xc" not in half_played
+    except Exception as e:
+        print(f"WARNING: Could not fetch FPL chip history: {e}")
+        
+    return available
+
 def get_fpl_data():
     print("Fetching live market odds for tactical alignment...")
     market_data = get_market_adjustments()
@@ -337,11 +368,19 @@ def get_fpl_data():
         try:
             team_resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{target_gw-1}/picks/", headers=headers)
             if team_resp.status_code == 200:
-                team_data = team_resp.json()
-                current_squad_ids = [pick["element"] for pick in team_data.get("picks", [])]
-                entry_history = team_data.get("entry_history", {})
-                bank = entry_history.get("bank", 0) / 10.0
-                total_liquid_budget = entry_history.get("value", 1000) / 10.0
+            team_data = team_resp.json()
+            current_squad_ids = []
+            
+            for pick in team_data.get("picks", []):
+                pid = pick["element"]
+                current_squad_ids.append(pid)
+                # Overwrite the base cost with exact FPL selling value for currently owned players
+                if pid in players:
+                    players[pid]["selling_price"] = pick.get("selling_price", players[pid]["cost"] * 10) / 10.0
+
+            entry_history = team_data.get("entry_history", {})
+            bank = entry_history.get("bank", 0) / 10.0
+            total_liquid_budget = entry_history.get("value", 1000) / 10.0
         except Exception as e:
             print(f"WARNING: Could not fetch squad for team {FPL_TEAM_ID}: {e}")
 
@@ -492,10 +531,14 @@ def get_fpl_data():
     dynamic_w_sub_1 = round(max(0.04, min(0.30, 1.0 - p_0)), 3)
     dynamic_w_sub_2 = round(max(0.01, min(0.15, 1.0 - p_0 - p_1)), 3)
 
+    # Fetch real-time chip inventory
+    available_chips = get_available_chips(target_gw, headers)
+
     optimal_squad, transfer_plan = solve_multi_period_model(
         players, ev_matrix, current_squad_ids, total_liquid_budget, 
         free_transfers, active_chip=ACTIVE_CHIP, horizons=8, risk_posture=RISK_POSTURE, target_gw=target_gw,
-        w_sub_1=dynamic_w_sub_1, w_sub_2=dynamic_w_sub_2, planned_chips=planned_chips
+        w_sub_1=dynamic_w_sub_1, w_sub_2=dynamic_w_sub_2, planned_chips=planned_chips, bank=bank,
+        available_chips=available_chips
     )
 
     if not optimal_squad or len(optimal_squad) < 15:

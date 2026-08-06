@@ -38,12 +38,14 @@ def get_combinatorial_bench_weights(likely_starters_xmins):
     return b1_weight, b2_weight, b3_weight
 
 def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: list, 
-                            total_liquid_budget: float, free_transfers: int, 
-                            active_chip: str = "NONE", horizons: int = 8, 
-                            risk_posture: str = "NEUTRAL", target_gw: int = 1,
-                            w_sub_1: float = 0.15, w_sub_2: float = 0.05,
-                            planned_chips: dict = None) -> tuple:
+                             total_liquid_budget: float, free_transfers: int, 
+                             active_chip: str = "NONE", horizons: int = 8, 
+                             risk_posture: str = "NEUTRAL", target_gw: int = 1,
+                             w_sub_1: float = 0.15, w_sub_2: float = 0.05,
+                             planned_chips: dict = None, bank: float = 0.0,
+                             available_chips: dict = None) -> tuple:
     if planned_chips is None: planned_chips = {}
+    if available_chips is None: available_chips = {"wildcard": True, "bboost": True, "3xc": True}
     
     valid_pids = [pid for pid in players.keys() if players[pid].get("status") in ["a", "d", ""]]
     if not valid_pids:
@@ -63,19 +65,63 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         swing_delta = late_ev - early_ev
         if t_id not in team_swing_scores: team_swing_scores[t_id] = []
         team_swing_scores[t_id].append(swing_delta)
-        
+    
     avg_team_swings = {t: sum(swings)/len(swings) for t, swings in team_swing_scores.items() if swings}
     peak_swing_team = max(avg_team_swings, key=avg_team_swings.get) if avg_team_swings else None
 
     prob = pulp.LpProblem("FPL_Multi_Period_Optimization", pulp.LpMaximize)
 
-    # Decision Variables
+    # Core Decision Variables
     x = pulp.LpVariable.dicts("x", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     s = pulp.LpVariable.dicts("s", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     c = pulp.LpVariable.dicts("c", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     
     trans_in = pulp.LpVariable.dicts("trans_in", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
     trans_out = pulp.LpVariable.dicts("trans_out", ((pid, t) for pid in valid_pids for t in range(horizons)), cat="Binary")
+
+    # Endogenous Chip Decision Variables
+    y_wc = pulp.LpVariable.dicts("y_wc", range(horizons), cat="Binary")
+    y_tc = pulp.LpVariable.dicts("y_tc", range(horizons), cat="Binary")
+    y_bb = pulp.LpVariable.dicts("y_bb", range(horizons), cat="Binary")
+
+    # Dynamic Cash Flow Ledger Variable
+    bank_balance = pulp.LpVariable.dicts("bank_balance", range(horizons), lowBound=0.0, cat="Continuous")
+
+    # Global Chip Rules: Hardware Inventory Link
+    prob += pulp.lpSum(y_wc[t] for t in range(horizons)) <= (1 if available_chips.get("wildcard", True) else 0)
+    prob += pulp.lpSum(y_tc[t] for t in range(horizons)) <= (1 if available_chips.get("3xc", True) else 0)
+    prob += pulp.lpSum(y_bb[t] for t in range(horizons)) <= (1 if available_chips.get("bboost", True) else 0)
+    
+    for t in range(horizons):
+        prob += y_wc[t] + y_tc[t] + y_bb[t] <= 1
+        
+        # Override to lock user's manual choice in GW 0, checking if legal
+        if t == 0:
+            if active_chip == "WILDCARD" and available_chips.get("wildcard", True): prob += y_wc[0] == 1
+            elif active_chip == "TRIPLE_CAPTAIN" and available_chips.get("3xc", True): prob += y_tc[0] == 1
+            elif active_chip == "BENCH_BOOST" and available_chips.get("bboost", True): prob += y_bb[0] == 1
+            elif active_chip == "NONE":
+                prob += y_wc[0] == 0
+                prob += y_tc[0] == 0
+                prob += y_bb[0] == 0
+
+    # The Gameweek 19 "Use It or Lose It" Constraint
+    # If the first half is ending within our horizon, force deployment.
+    if target_gw <= 19:
+        gw19_idx = 19 - target_gw
+        if 0 <= gw19_idx < horizons:
+            active_vars = []
+            if available_chips.get("wildcard", True): active_vars.append(y_wc)
+            if available_chips.get("3xc", True): active_vars.append(y_tc)
+            if available_chips.get("bboost", True): active_vars.append(y_bb)
+            
+            available_slots = gw19_idx + 1
+            
+            # Ensure the solver doesn't crash if you have 3 chips but only 2 gameweeks left
+            if available_slots >= len(active_vars):
+                for y_var in active_vars:
+                    # Mathematically force the sum of the chip variable to equal 1 BEFORE Gameweek 20
+                    prob += pulp.lpSum(y_var[t] for t in range(available_slots)) == 1
 
     # Same-Team Goalkeeper Coupling Variables
     gk_by_team = {}
@@ -85,10 +131,10 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             if t_id:
                 if t_id not in gk_by_team: gk_by_team[t_id] = []
                 gk_by_team[t_id].append(pid)
-                
+    
     gk_pair = pulp.LpVariable.dicts("gk_pair", 
-                ((t_id, t) for t_id in gk_by_team for t in range(horizons)), 
-                cat="Binary")
+                                    ((t_id, t) for t_id in gk_by_team for t in range(horizons)), 
+                                    cat="Binary")
 
     discount_factor = 0.85
     objective_terms = []
@@ -97,40 +143,53 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     # --- PRIMARY OPTIMIZATION LOOP ---
     for t in range(horizons):
         t_weight = discount_factor ** t
-        cap_mult = 2.0 if (t == 0 and active_chip == "TRIPLE_CAPTAIN") else 1.0
 
-        # Store adjusted EVs for this specific gameweek to prevent bench tax-evasion
         adjusted_evs = {}
-
         for pid in valid_pids:
             p = players[pid]
             base_ev = ev_matrix[pid][t]
-                
-            # Optimization & Game Theory Gating (Variance & EO)
+            
             floor_ev = p.get("mc_floor_ev", base_ev * 0.8) 
             ceiling_ev = p.get("mc_ceiling_ev", base_ev * 1.2)
             eo = p.get("top_10k_eo", p.get("own", 0.0))
-                
+            
             if risk_posture == "SHIELD":
                 eo_shield_multiplier = min(1.0, 0.7 + (eo / 100.0) * 0.3)
                 base_ev = floor_ev * eo_shield_multiplier
-                    
             elif risk_posture == "CHASE":
                 eo_chase_tax = max(0.6, 1.0 - (eo / 200.0))
                 base_ev = ceiling_ev * eo_chase_tax
 
             adjusted_evs[pid] = base_ev
 
-            # Co-optimize Starting XI EV + Captain 2x Multiplier
+            # Base Starting XI EV & Captain 2x Multiplier
             objective_terms.append(t_weight * base_ev * s[pid, t])
-            objective_terms.append(t_weight * base_ev * cap_mult * c[pid, t])
+            objective_terms.append(t_weight * base_ev * c[pid, t])
 
-        # Transfer hit penalties (-4 pts per hit)
+        # Triple Captain Multiplier Linearization (adds 3rd x multiplier if y_tc[t] == 1)
+        tc_cap = pulp.LpVariable.dicts(f"tc_cap_{t}", valid_pids, cat="Binary")
+        for pid in valid_pids:
+            prob += tc_cap[pid] <= c[pid, t]
+            prob += tc_cap[pid] <= y_tc[t]
+            prob += tc_cap[pid] >= c[pid, t] + y_tc[t] - 1
+            objective_terms.append(t_weight * adjusted_evs[pid] * tc_cap[pid])
+
+        # Transfer Hit Penalty & Wildcard Hit Suppression
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
-            for pid in valid_pids:
-                objective_terms.append(-4.0 * trans_in[pid, t])
+            hit_cost = pulp.LpVariable(f"hit_cost_{t}", lowBound=0.0, cat="Continuous")
+            trans_sum = pulp.lpSum(trans_in[pid, t] for pid in valid_pids)
+            prob += hit_cost >= 4.0 * (trans_sum - 1) - (100.0 * y_wc[t])
+            objective_terms.append(-hit_cost)
 
-        # Pure Game-Rule Constraints
+        # Bench Boost Objective Linearization
+        bb_active = pulp.LpVariable.dicts(f"bb_active_{t}", valid_pids, cat="Binary")
+        for pid in valid_pids:
+            prob += bb_active[pid] <= (x[pid, t] - s[pid, t])
+            prob += bb_active[pid] <= y_bb[t]
+            prob += bb_active[pid] >= (x[pid, t] - s[pid, t]) + y_bb[t] - 1
+            objective_terms.append(adjusted_evs[pid] * bb_active[pid] * t_weight)
+
+        # Core Game-Rule Constraints
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids) == 15
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids) == 11
         prob += pulp.lpSum(c[pid, t] for pid in valid_pids) == 1
@@ -145,17 +204,14 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5
         prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3
 
-        # Starting XI Position Constraints (1 GKP, 3-4 DEF, 3-5 MID, 1-3 FWD)
+        # Starting XI Position Constraints
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3
-        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 4 # Strictly kills 5-at-the-back
+        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 4
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 3
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
-       # --- NEW: Dynamic Time-Horizon Pricing ---
-        # Base cost compounds by the predicted delta multiplied by the gameweek horizon index
-        
-        # Squad Structure Guardrail: Force £4.0m/£4.5m GK Fodder Meta using projected costs
+        # Goalkeeper Budget Guardrail (Max £9.5m spend on GKs)
         prob += pulp.lpSum(
             (players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * x[pid, t] 
             for pid in valid_pids if players[pid]["pos_id"] == 1
@@ -166,11 +222,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for team_id in team_ids:
             prob += pulp.lpSum(x[pid, t] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
-        # Total Financial Budget using projected costs
-        prob += pulp.lpSum(
-            (players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * x[pid, t] 
-            for pid in valid_pids
-        ) <= total_liquid_budget
+        # Dynamic Cash Flow & Exact Selling Value Constraints
+        if t == 0:
+            cash_in = pulp.lpSum(players[pid].get("selling_price", players[pid]["cost"]) * trans_out[pid, 0] for pid in valid_pids)
+            cash_out = pulp.lpSum(players[pid]["cost"] * trans_in[pid, 0] for pid in valid_pids)
+            prob += bank_balance[0] == bank + cash_in - cash_out
+        else:
+            future_cash_in = pulp.lpSum((players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * trans_out[pid, t] for pid in valid_pids)
+            future_cash_out = pulp.lpSum((players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * trans_in[pid, t] for pid in valid_pids)
+            prob += bank_balance[t] == bank_balance[t-1] + future_cash_in - future_cash_out
 
         # Same-Team Goalkeeper Handshake Constraints
         for t_id, gks in gk_by_team.items():
@@ -205,21 +265,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for p in outfield_pids:
             objective_terms.append(adjusted_evs[p] * (x[p, t] - s[p, t]) * blended_bench_wt * (discount_factor**t))
 
-        # --- UPGRADED: Smarter Sub GK Tie-Breaker ---
-        # Coexists with the Handshake Bonus. If a handshake isn't used, 
-        # this ensures the best independent £4.0m keeper is selected.
-        # --- UPGRADED: Smarter Sub GK Tie-Breaker ---
+        # Smarter Sub GK Tie-Breaker
         for p in gk_pids:
             p_obj = players[p]
-            # Check explicit xmins or ml_xmins overrides prior to falling back to heuristics
             p_xmins = p_obj.get("xmins", p_obj.get("ml_xmins", estimate_xmins(p_obj)))
             p_ev = adjusted_evs[p]
-        
-            # Primary Tie-Breaker: xMins (0.001 weight) | Secondary: EV (0.0001 weight)
             sub_gk_score = (p_xmins * 0.001) + (p_ev * 0.0001)
             objective_terms.append(sub_gk_score * (x[p, t] - s[p, t]) * (discount_factor**t))
 
-        # Squad continuity
+        # Squad Continuity Constraints
         for pid in valid_pids:
             if t == 0:
                 is_init = 1 if pid in initial_owned else 0
@@ -230,15 +284,14 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         if not (t == 0 and (target_gw == 1 or free_transfers == "Unlimited")):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
 
-    # Add all terms to the objective function AFTER the loop is complete
+    # Add all terms to objective function
     prob += pulp.lpSum(objective_terms)
 
-    # Attempt HiGHS solver for superior branch-and-bound speed, fallback to CBC
+    # Solve using HiGHS with CBC fallback
     try:
-        # 30-second time limit prevents infinite branching loops
         prob.solve(pulp.HiGHS_CMD(msg=False, timeLimit=30))
     except Exception as e:
-        print(f"HiGHS solver not available ({e}), falling back to CBC.")
+        logger.warning(f"HiGHS solver not available ({e}), falling back to CBC.")
         prob.solve(pulp.PULP_CBC_CMD(msg=False))
 
     optimal_squad = []
@@ -255,8 +308,13 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for t in range(1, min(4, horizons)):
             gw_trans_in = [players[pid]["name"] for pid in valid_pids if trans_in[pid, t].varValue and trans_in[pid, t].varValue > 0.5]
             gw_trans_out = [players[pid]["name"] for pid in valid_pids if trans_out[pid, t].varValue and trans_out[pid, t].varValue > 0.5]
-            if gw_trans_in or gw_trans_out:
-                transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]")
+            chip_str = ""
+            if y_wc[t].varValue and y_wc[t].varValue > 0.5: chip_str = " [WILDCARD DEPLOYED]"
+            elif y_tc[t].varValue and y_tc[t].varValue > 0.5: chip_str = " [TRIPLE CAPTAIN DEPLOYED]"
+            elif y_bb[t].varValue and y_bb[t].varValue > 0.5: chip_str = " [BENCH BOOST DEPLOYED]"
+
+            if gw_trans_in or gw_trans_out or chip_str:
+                transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]{chip_str}")
         
         if peak_swing_team:
             team_name_str = next((p["team"] for p in players.values() if p.get("team_id") == peak_swing_team), str(peak_swing_team))
