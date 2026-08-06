@@ -40,6 +40,11 @@ on:
           - NEUTRAL
           - SHIELD
           - CHASE
+      debug_mode:
+        description: 'Enable Raw Mathematical Debug Trace'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   run-fpl-bot:
@@ -47,6 +52,8 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          clean: false
 
       - name: Install Dependencies
         run: |
@@ -69,6 +76,7 @@ jobs:
           ACTIVE_CHIP: ${{ github.event.inputs.active_chip || 'NONE' }}
           XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
           RISK_POSTURE: ${{ github.event.inputs.risk_posture || 'NEUTRAL' }}
+          DEBUG_MODE: ${{ github.event.inputs.debug_mode || 'false' }}
         run: venv/bin/python fpl_bot.py
 
       - name: Commit Updated State Files

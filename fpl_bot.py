@@ -49,6 +49,73 @@ if not all([GEMINI_API_KEY, DISCORD_WEBHOOK_URL, FPL_TEAM_ID]):
 
 client = genai.Client(api_key=GEMINI_API_KEY)
 
+DEBUG_MODE = os.environ.get("DEBUG_MODE", "false").lower() in ["true", "1", "yes"]
+
+def generate_raw_debug_trace(target_gw, bank, free_transfers, total_liquid_budget, 
+                             weights, available_chips, dynamic_w_sub_1, dynamic_w_sub_2, 
+                             p_0, p_1, ev_matrix, players, optimal_squad, transfer_plan):
+    """
+    Generates a raw, unformatted, plain-text mathematical trace of all intermediate calculations.
+    """
+    trace = []
+    trace.append("================================================================================")
+    trace.append(f" RAW MATHEMATICAL DEBUG TRACE — GAMEWEEK {target_gw}")
+    trace.append("================================================================================")
+    trace.append(f"[STATE] Bank: £{bank}m | Budget: £{total_liquid_budget}m | Free Transfers: {free_transfers}")
+    trace.append(f"[WEIGHTS] xGI Weight: {weights.get('xgi_weight'):.3f} | FDR Impact: {weights.get('fdr_impact_factor'):.3f} | Bench Discount: {weights.get('bench_discount'):.3f}")
+    trace.append(f"[CHIP INVENTORY] Wildcard: {available_chips.get('wildcard')} | 3xC: {available_chips.get('3xc')} | BB: {available_chips.get('bboost')} | FH: {available_chips.get('freehit')}")
+    trace.append(f"[BENCH MATH] Prob 0 Absences (p0): {p_0:.4f} | Prob 1 Absence (p1): {p_1:.4f} | Sub Weight 1: {dynamic_w_sub_1:.3f} | Sub Weight 2: {dynamic_w_sub_2:.3f}")
+    trace.append("")
+    
+    trace.append("--- TOP 20 PLAYERS BY 1-GW EV & UNDERLYING METRICS ---")
+    trace.append(f"{'ID':<5} {'Name':<20} {'Pos':<4} {'Cost':<5} {'xMins':<6} {'BaseEV':<7} {'1GW_EV':<7} {'8GW_EV':<7} {'Floor':<6} {'Ceil':<6} {'EO%':<5}")
+    trace.append("-" * 88)
+    
+    sorted_pids = sorted(players.keys(), key=lambda k: ev_matrix[k][0], reverse=True)[:20]
+    for pid in sorted_pids:
+        p = players[pid]
+        xmins = p.get("ml_xmins", estimate_xmins(p))
+        ev_1gw = ev_matrix[pid][0]
+        ev_8gw = sum(ev_matrix[pid])
+        floor_ev = p.get("mc_floor_ev", 0.0)
+        ceil_ev = p.get("mc_ceiling_ev", 0.0)
+        eo = p.get("top_10k_eo", p.get("own", 0.0))
+        base_ev = p.get("domain_base_ev", 0.0)
+        
+        trace.append(f"{pid:<5} {p['name']:<20} {p['pos']:<4} £{p['cost']:<4.1f} {xmins:<6.1f} {base_ev:<7.2f} {ev_1gw:<7.2f} {ev_8gw:<7.2f} {floor_ev:<6.2f} {ceil_ev:<6.2f} {eo:<5.1f}")
+
+    trace.append("")
+    trace.append("--- OPTIMAL SQUAD DECISION MATRIX (SOLVER OUTPUT) ---")
+    trace.append(f"{'Role':<8} {'Pos':<4} {'Name':<20} {'Cost':<5} {'1GW_EV':<7} {'8GW_EV':<7} {'xMins Matrix (GW1-8)'}")
+    trace.append("-" * 90)
+
+    starters = [p for p in optimal_squad if p.get("is_starter")]
+    bench = [p for p in optimal_squad if not p.get("is_starter")]
+
+    for p in starters:
+        role = "CAPT" if p.get("is_captain") else "START"
+        evs = ev_matrix[p["id"]]
+        xmins_vec = p.get("ml_xmins_matrix", [p.get("ml_xmins", 90.0)] * 8)
+        xmins_str = "[" + ", ".join([f"{x:.0f}" for x in xmins_vec[:8]]) + "]"
+        trace.append(f"{role:<8} {p['pos']:<4} {p['name']:<20} £{p['cost']:<4.1f} {evs[0]:<7.2f} {sum(evs):<7.2f} {xmins_str}")
+
+    for p in bench:
+        role = "BENCH"
+        evs = ev_matrix[p["id"]]
+        xmins_vec = p.get("ml_xmins_matrix", [p.get("ml_xmins", 90.0)] * 8)
+        xmins_str = "[" + ", ".join([f"{x:.0f}" for x in xmins_vec[:8]]) + "]"
+        trace.append(f"{role:<8} {p['pos']:<4} {p['name']:<20} £{p['cost']:<4.1f} {evs[0]:<7.2f} {sum(evs):<7.2f} {xmins_str}")
+
+    trace.append("")
+    trace.append("--- MULTI-PERIOD TRANSFER TREE & CHIP DEPLOYMENT ---")
+    if transfer_plan:
+        for tp in transfer_plan: trace.append(f"[PLAN] {tp}")
+    else:
+        trace.append("[PLAN] Hold transfers / Initial allocation locked.")
+    
+    trace.append("================================================================================")
+    return "\n".join(trace)
+
 SYSTEM_INSTRUCTION = """
 You are an institutional-grade Quantitative Fantasy Premier League (FPL) Analyst and Tactical Decision Engine.
 Your objective is to provide a strict, data-driven analysis of the provided MILP solver output.
@@ -663,7 +730,7 @@ def get_fpl_data():
 
     locked_squad_str = "\n".join(squad_lines)
 
-    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str
+    return target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, weights, available_chips, dynamic_w_sub_1, dynamic_w_sub_2, p_0, p_1, ev_matrix, players, optimal_squad, transfer_plan, total_liquid_budget
 
 def build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news):
     gw1_override = "\n 6. PRE-SEASON RULE OVERRIDE: GW1 has UNLIMITED free transfers." if (target_gw == 1 or str(free_transfers).lower() == "unlimited") else ""
@@ -718,7 +785,25 @@ def send_to_discord(webhook_url, text):
     for chunk in chunks: requests.post(webhook_url, json={"content": chunk})
 
 def main():
-    target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str = get_fpl_data()
+    (target_gw, bank, free_transfers, locked_squad_str, market_str, 
+     new_arrivals_str, weights, available_chips, dynamic_w_sub_1, 
+     dynamic_w_sub_2, p_0, p_1, ev_matrix, players, optimal_squad, 
+     transfer_plan, total_liquid_budget) = get_fpl_data()
+
+    if DEBUG_MODE:
+        print("--- DEBUG MODE ENABLED: GENERATING RAW MATHEMATICAL TRACE ---")
+        debug_trace = generate_raw_debug_trace(
+            target_gw, bank, free_transfers, total_liquid_budget, 
+            weights, available_chips, dynamic_w_sub_1, dynamic_w_sub_2, 
+            p_0, p_1, ev_matrix, players, optimal_squad, transfer_plan
+        )
+        
+        # Send raw trace formatted in text codeblock to Discord
+        send_to_discord(DISCORD_WEBHOOK_URL, f"```text\n{debug_trace}\n```")
+        print("--- DEBUG TRACE DELIVERED TO DISCORD ---")
+        return
+
+    # Normal execution flow
     print("--- FETCHING LIVE WEB SEARCH DATA ---")
     live_news = get_live_fpl_news()
     prompt = build_prompt(target_gw, bank, free_transfers, locked_squad_str, market_str, new_arrivals_str, live_news)
