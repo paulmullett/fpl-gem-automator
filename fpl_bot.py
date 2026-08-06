@@ -68,8 +68,8 @@ def generate_raw_debug_trace(target_gw, bank, free_transfers, total_liquid_budge
     trace.append("")
     
     trace.append("--- TOP 20 PLAYERS BY 1-GW EV & UNDERLYING METRICS ---")
-    trace.append(f"{'ID':<5} {'Name':<20} {'Pos':<4} {'Cost':<5} {'xMins':<6} {'BaseEV':<7} {'1GW_EV':<7} {'8GW_EV':<7} {'Floor':<6} {'Ceil':<6} {'EO%':<5}")
-    trace.append("-" * 88)
+    trace.append(f"{'ID':<5} {'Name':<20} {'Pos':<4} {'Cost':<5} {'xMins':<6} {'1GW_EV':<7} {'8GW_EV':<7} {'Floor':<6} {'Ceil':<6} {'EO%':<5}")
+    trace.append("-" * 80)
     
     sorted_pids = sorted(players.keys(), key=lambda k: ev_matrix[k][0], reverse=True)[:20]
     for pid in sorted_pids:
@@ -80,9 +80,8 @@ def generate_raw_debug_trace(target_gw, bank, free_transfers, total_liquid_budge
         floor_ev = p.get("mc_floor_ev", 0.0)
         ceil_ev = p.get("mc_ceiling_ev", 0.0)
         eo = p.get("top_10k_eo", p.get("own", 0.0))
-        base_ev = p.get("domain_base_ev", 0.0)
         
-        trace.append(f"{pid:<5} {p['name']:<20} {p['pos']:<4} £{p['cost']:<4.1f} {xmins:<6.1f} {base_ev:<7.2f} {ev_1gw:<7.2f} {ev_8gw:<7.2f} {floor_ev:<6.2f} {ceil_ev:<6.2f} {eo:<5.1f}")
+        trace.append(f"{pid:<5} {p['name']:<20} {p['pos']:<4} £{p['cost']:<4.1f} {xmins:<6.1f} {ev_1gw:<7.2f} {ev_8gw:<7.2f} {floor_ev:<6.2f} {ceil_ev:<6.2f} {eo:<5.1f}")
 
     trace.append("")
     trace.append("--- OPTIMAL SQUAD DECISION MATRIX (SOLVER OUTPUT) ---")
@@ -90,17 +89,28 @@ def generate_raw_debug_trace(target_gw, bank, free_transfers, total_liquid_budge
     trace.append("-" * 90)
 
     starters = [p for p in optimal_squad if p.get("is_starter")]
-    bench = [p for p in optimal_squad if not p.get("is_starter")]
+    bench_gk = [p for p in optimal_squad if not p.get("is_starter") and p["pos_id"] == 1]
+    bench_outfield = sorted([p for p in optimal_squad if not p.get("is_starter") and p["pos_id"] != 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
 
     for p in starters:
-        role = "CAPT" if p.get("is_captain") else "START"
+        if p.get("is_captain"): role = "CAPT"
+        elif p.get("is_vice"): role = "VICE"
+        else: role = "START"
+        
         evs = ev_matrix[p["id"]]
         xmins_vec = p.get("ml_xmins_matrix", [p.get("ml_xmins", 90.0)] * 8)
         xmins_str = "[" + ", ".join([f"{x:.0f}" for x in xmins_vec[:8]]) + "]"
         trace.append(f"{role:<8} {p['pos']:<4} {p['name']:<20} £{p['cost']:<4.1f} {evs[0]:<7.2f} {sum(evs):<7.2f} {xmins_str}")
 
-    for p in bench:
-        role = "BENCH"
+    for p in bench_gk:
+        role = "GK"
+        evs = ev_matrix[p["id"]]
+        xmins_vec = p.get("ml_xmins_matrix", [p.get("ml_xmins", 90.0)] * 8)
+        xmins_str = "[" + ", ".join([f"{x:.0f}" for x in xmins_vec[:8]]) + "]"
+        trace.append(f"{role:<8} {p['pos']:<4} {p['name']:<20} £{p['cost']:<4.1f} {evs[0]:<7.2f} {sum(evs):<7.2f} {xmins_str}")
+
+    for idx, p in enumerate(bench_outfield, 1):
+        role = f"SUB{idx}"
         evs = ev_matrix[p["id"]]
         xmins_vec = p.get("ml_xmins_matrix", [p.get("ml_xmins", 90.0)] * 8)
         xmins_str = "[" + ", ".join([f"{x:.0f}" for x in xmins_vec[:8]]) + "]"
@@ -628,15 +638,27 @@ def get_fpl_data():
     starters, bench = [], []
     cap = None
     for p in optimal_squad:
-        if s_vars[p["id"]].varValue and s_vars[p["id"]].varValue > 0.5:
+        is_st = bool(s_vars[p["id"]].varValue and s_vars[p["id"]].varValue > 0.5)
+        is_cp = bool(c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5)
+        p["is_starter"] = is_st
+        p["is_captain"] = is_cp
+        p["is_vice"] = False
+        if is_st:
             starters.append(p)
-            if c_vars[p["id"]].varValue and c_vars[p["id"]].varValue > 0.5: cap = p
-        else: bench.append(p)
+            if is_cp: cap = p
+        else:
+            bench.append(p)
     
     starters.sort(key=lambda x: x["pos_id"])
     starters_sorted_by_1gw = sorted(starters, key=lambda x: ev_matrix[x["id"]][0], reverse=True)
     vice = next((p for p in starters_sorted_by_1gw if not cap or (p["id"] != cap["id"] and p["team_id"] != cap["team_id"])), starters_sorted_by_1gw[0])
     
+    if vice:
+        for p in starters:
+            if p["id"] == vice["id"]:
+                p["is_vice"] = True
+                break
+
     optimal_squad = starters + bench
 
     european_flags = check_european_congestion_flags(starters, fixtures_data, target_gw)
