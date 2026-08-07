@@ -326,7 +326,7 @@
         "ml_ev_8gw": 24.37,
         "mc_floor_ev": 3.17,
         "mc_ceiling_ev": 6.74,
-        "top_10k_eo": 16.4,
+        "top_10k_eo": 16.3,
         "predicted_price_delta": 0.0
     },
     "12": {
@@ -4526,7 +4526,7 @@
         "ml_ev_8gw": 21.74,
         "mc_floor_ev": 2.18,
         "mc_ceiling_ev": 4.54,
-        "top_10k_eo": 1.8,
+        "top_10k_eo": 1.7,
         "predicted_price_delta": 0.0
     },
     "150": {
@@ -4676,7 +4676,7 @@
         "ml_ev_8gw": 37.0,
         "mc_floor_ev": 2.61,
         "mc_ceiling_ev": 8.33,
-        "top_10k_eo": 12.1,
+        "top_10k_eo": 12.0,
         "predicted_price_delta": 0.0
     },
     "155": {
@@ -5202,20 +5202,20 @@
             75.0,
             75.0
         ],
-        "ml_ev_1gw": 2.31,
+        "ml_ev_1gw": 2.33,
         "ml_ev_matrix": [
-            2.31,
-            2.31,
-            2.31,
-            2.31,
-            2.31,
-            2.31,
-            2.31,
-            2.31
+            2.33,
+            2.33,
+            2.33,
+            2.33,
+            2.33,
+            2.33,
+            2.33,
+            2.33
         ],
-        "ml_ev_8gw": 18.48,
-        "mc_floor_ev": 1.06,
-        "mc_ceiling_ev": 3.87,
+        "ml_ev_8gw": 18.64,
+        "mc_floor_ev": 1.07,
+        "mc_ceiling_ev": 3.9,
         "top_10k_eo": 0.0,
         "predicted_price_delta": 0.0
     },
@@ -8306,7 +8306,7 @@
         "ml_ev_8gw": 0.16,
         "mc_floor_ev": 0.0,
         "mc_ceiling_ev": 0.04,
-        "top_10k_eo": 0.0,
+        "top_10k_eo": 0.1,
         "predicted_price_delta": 0.0
     },
     "273": {
@@ -8726,7 +8726,7 @@
         "ml_ev_8gw": 17.79,
         "mc_floor_ev": 0.44,
         "mc_ceiling_ev": 4.3,
-        "top_10k_eo": 0.6,
+        "top_10k_eo": 0.5,
         "predicted_price_delta": 0.0
     },
     "287": {
@@ -14606,7 +14606,7 @@
         "ml_ev_8gw": 26.5,
         "mc_floor_ev": 2.93,
         "mc_ceiling_ev": 5.85,
-        "top_10k_eo": 12.9,
+        "top_10k_eo": 12.8,
         "predicted_price_delta": 0.0
     },
     "470": {
@@ -15506,7 +15506,7 @@
         "ml_ev_8gw": 1.67,
         "mc_floor_ev": 0.02,
         "mc_ceiling_ev": 0.09,
-        "top_10k_eo": 23.8,
+        "top_10k_eo": 23.7,
         "predicted_price_delta": 0.0
     },
     "498": {
