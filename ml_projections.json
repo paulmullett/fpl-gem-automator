@@ -8251,16 +8251,16 @@
     },
     "569": {
         "name": "Garc\u00eda",
-        "ml_xmins": 45.3,
+        "ml_xmins": 45.4,
         "ml_xmins_matrix": [
-            45.3,
-            45.3,
-            45.3,
-            45.3,
-            45.3,
-            45.3,
-            45.3,
-            45.3
+            45.4,
+            45.4,
+            45.4,
+            45.4,
+            45.4,
+            45.4,
+            45.4,
+            45.4
         ],
         "ml_ev_1gw": 1.11,
         "ml_ev_matrix": [
@@ -8276,7 +8276,7 @@
         "ml_ev_8gw": 8.88,
         "mc_floor_ev": 0.23,
         "mc_ceiling_ev": 2.21,
-        "top_10k_eo": 0.5,
+        "top_10k_eo": 0.55,
         "predicted_price_delta": 0.0
     },
     "570": {
@@ -15656,7 +15656,7 @@
         "ml_ev_8gw": 3.35,
         "mc_floor_ev": 0.14,
         "mc_ceiling_ev": 0.61,
-        "top_10k_eo": 0.9,
+        "top_10k_eo": 0.95,
         "predicted_price_delta": 0.0
     },
     "503": {
@@ -17126,7 +17126,7 @@
         "ml_ev_8gw": 18.51,
         "mc_floor_ev": 1.33,
         "mc_ceiling_ev": 3.72,
-        "top_10k_eo": 19.7,
+        "top_10k_eo": 19.6,
         "predicted_price_delta": 0.0
     },
     "553": {
