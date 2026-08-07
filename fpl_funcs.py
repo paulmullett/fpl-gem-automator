@@ -269,7 +269,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     extra_defensive_points = 0.0
     if pos_id == 1:
         estimated_saves = max(1.5, (xgc * 1.4))
-        extra_defensive_points = (estimated_saves / 3.0) * 0.33 * mins_factor
+        extra_defensive_points = (estimated_saves / 3.0) * mins_factor
     elif pos_id in [2, 3, 4]:
         # --- THE HYBRID BAYESIAN ANCHOR ---
         # Trust factor scales from 0.0 to 1.0 as the player reaches 360 mins (4 full games)

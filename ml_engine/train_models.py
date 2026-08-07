@@ -208,13 +208,11 @@ def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
     return crowd_xmins
 
 def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
-    """Fetches upcoming fixtures and returns a mapping of integer team_id -> opponent integer team_id."""
     if current_gw is None:
         try:
             bootstrap = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", timeout=10).json()
             next_events = [e for e in bootstrap['events'] if e.get('is_next')]
-            if not next_events:
-                next_events = [e for e in bootstrap['events'] if e.get('is_current')]
+            if not next_events: next_events = [e for e in bootstrap['events'] if e.get('is_current')]
             current_gw = next_events[0]['id'] if next_events else 1
         except Exception:
             current_gw = 1
@@ -224,13 +222,13 @@ def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
         url = f"https://fantasy.premierleague.com/api/fixtures/?event={current_gw}"
         response = requests.get(url, timeout=10)
         if response.status_code == 200:
-            fixtures = response.json()
-            for f in fixtures:
-                h_team = f.get('team_h')
-                a_team = f.get('team_a')
+            for f in response.json():
+                h_team, a_team = f.get('team_h'), f.get('team_a')
                 if h_team and a_team:
-                    opp_map[int(h_team)] = int(a_team)
-                    opp_map[int(a_team)] = int(h_team)
+                    if int(h_team) not in opp_map: opp_map[int(h_team)] = []
+                    if int(a_team) not in opp_map: opp_map[int(a_team)] = []
+                    opp_map[int(h_team)].append(int(a_team))
+                    opp_map[int(a_team)].append(int(h_team))
     except Exception as e:
         logger.warning(f"Could not fetch upcoming fixture mapping: {e}")
     return opp_map
@@ -343,12 +341,20 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
 
     def resolve_opp_rating(team_id):
         try:
-            opp_id = opp_mapping.get(int(team_id))
-            if not opp_id: return 1.0
-            opp_short = teams_short_by_id.get(opp_id, "")
-            if opp_short in team_ratings: return team_ratings[opp_short]
-            opp_fbref = FPL_TO_FBREF_TEAM.get(opp_short, "")
-            if opp_fbref in team_ratings: return team_ratings[opp_fbref]
+            opp_ids = opp_mapping.get(int(team_id), [])
+            if not opp_ids: return 0.0 # Blank Gameweek (0.0 multiplier kills EV)
+            
+            ratings = []
+            for opp_id in opp_ids:
+                opp_short = teams_short_by_id.get(opp_id, "")
+                if opp_short in team_ratings: ratings.append(team_ratings[opp_short])
+                else:
+                    opp_fbref = FPL_TO_FBREF_TEAM.get(opp_short, "")
+                    if opp_fbref in team_ratings: ratings.append(team_ratings[opp_fbref])
+                    else: ratings.append(1.0)
+            
+            # Sum the ratings: 2 matches = ~2.0 multiplier, accurately scaling DGW Expected Value
+            return sum(ratings)
         except: pass
         return 1.0
 

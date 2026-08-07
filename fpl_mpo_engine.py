@@ -225,8 +225,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 cash_in = pulp.lpSum(players[pid].get("selling_price", players[pid]["cost"]) * trans_out[pid, 0] for pid in valid_pids)
                 cash_out = pulp.lpSum(players[pid]["cost"] * trans_in[pid, 0] for pid in valid_pids)
                 prob += bank_balance[0] == bank + cash_in - cash_out
-        else:
-            future_cash_in = pulp.lpSum((players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t)) * trans_out[pid, t] for pid in valid_pids)
+       else:
+            # Multiply price delta by 0.5 to approximate the 50% FPL profit tax
+            future_cash_in = pulp.lpSum((players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t * 0.5)) * trans_out[pid, t] for pid in valid_pids)
             future_cash_out = pulp.lpSum((players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t)) * trans_in[pid, t] for pid in valid_pids)
             prob += bank_balance[t] == bank_balance[t-1] + future_cash_in - future_cash_out
 
