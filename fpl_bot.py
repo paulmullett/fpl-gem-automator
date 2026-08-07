@@ -630,9 +630,8 @@ def get_fpl_data():
     for p in optimal_squad: sub_prob += c_vars[p["id"]] <= s_vars[p["id"]]
     
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 1]) == 1
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) >= 3
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) <= 4
-    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 3]) >= 3
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 2]) <= 5
+    sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 3]) >= 2
     sub_prob += pulp.lpSum([s_vars[p["id"]] for p in optimal_squad if p["pos_id"] == 4]) >= 1
 
     sub_prob.solve(pulp.PULP_CBC_CMD(msg=False))
@@ -667,7 +666,8 @@ def get_fpl_data():
 
     projected_starting_xP = sum(ev_matrix[p["id"]][0] for p in starters)
     if cap:
-        cap_mult = 2.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 1.0
+        # Standard captain gives 2.0x (1x base + 1x bonus); Triple Captain gives 3.0x (1x base + 2x bonus)
+        cap_mult = 3.0 if ACTIVE_CHIP == "TRIPLE_CAPTAIN" else 2.0
         projected_starting_xP += (ev_matrix[cap["id"]][0] * (cap_mult - 1.0))
     
     state["pending_evaluation"] = {

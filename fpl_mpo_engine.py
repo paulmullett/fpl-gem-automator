@@ -198,8 +198,8 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         # Starting XI Position Constraints
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3
-        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 4
-        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 3
+        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 5
+        prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 2
         prob += pulp.lpSum(s[pid, t] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
         # Goalkeeper Budget Guardrail (Max £9.5m spend on GKs)
@@ -301,6 +301,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
         if not (t == 0 and (target_gw == 1 or str(free_transfers).lower() in ["unlimited", "999"])):
             prob += pulp.lpSum(trans_in[pid, t] for pid in valid_pids) <= 3
+
+        # --- THE SOFT PENALTY: Wildcard Anti-Churn Logic ---
+        if t < horizons - 1:
+            wc_churn = pulp.LpVariable.dicts(f"wc_churn_{t}", valid_pids, lowBound=0.0, cat="Continuous")
+            for pid in valid_pids:
+                # If Wildcard is played (y_wc=1) AND player bought (trans_in=1) AND player sold next week (trans_out=1), wc_churn >= 1.0
+                prob += wc_churn[pid] >= y_wc[t] + trans_in[pid, t] + trans_out[pid, t+1] - 2.0
+                # Apply the -4.0 Expected Value penalty to the solver's objective function
+                objective_terms.append(-4.0 * wc_churn[pid])
 
     # Add all terms to objective function
     prob += pulp.lpSum(objective_terms)
