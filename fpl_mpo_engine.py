@@ -127,19 +127,34 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
     is_fresh_squad = len(initial_owned) == 0
 
-    # Define the Opportunity Cost of burning chips early (Based on late-season Double GW yields)
-    WILDCARD_OPPORTUNITY_COST = 14.0
-    TC_OPPORTUNITY_COST = 12.0      # E.g., Haaland Double Gameweek bonus
-    BB_OPPORTUNITY_COST = 16.0      # E.g., 4 playing bench players in a Double Gameweek
+    # --- DYNAMIC OPPORTUNITY COST CALCULATION (8-CHIP ERA) ---
+    if target_gw <= 19:
+        # HALF 1: All chips expire at GW19.
+        # Peaks are anchored to Single Gameweek outputs.
+        remaining_half1 = max(1.0, 19.0 - target_gw)
+        decay = (remaining_half1 / 18.0) ** 0.5
+        
+        wc_cost = 14.0 * decay
+        tc_cost = 9.0 * decay
+        bb_cost = 10.0 * decay
+    else:
+        # HALF 2: All chips refresh. Expires at GW38.
+        # Peaks are anchored to massive late-season Double Gameweeks.
+        remaining_half2 = max(1.0, 38.0 - target_gw)
+        decay = (remaining_half2 / 18.0) ** 0.5
+        
+        wc_cost = 16.0 * decay
+        tc_cost = 14.0 * decay
+        bb_cost = 18.0 * decay
 
     # --- PRIMARY OPTIMIZATION LOOP ---
     for t in range(horizons):
         t_weight = discount_factor ** t
         
-        # Penalize all chip usage to simulate long-term holding value outside the 8-GW window
-        objective_terms.append(-1.0 * WILDCARD_OPPORTUNITY_COST * y_wc[t])
-        objective_terms.append(-1.0 * TC_OPPORTUNITY_COST * y_tc[t])
-        objective_terms.append(-1.0 * BB_OPPORTUNITY_COST * y_bb[t])
+        # Penalize chip usage based on dynamic calendar state & half-season deadlines
+        objective_terms.append(-1.0 * wc_cost * y_wc[t])
+        objective_terms.append(-1.0 * tc_cost * y_tc[t])
+        objective_terms.append(-1.0 * bb_cost * y_bb[t])
 
         adjusted_evs = {}
         for pid in valid_pids:
