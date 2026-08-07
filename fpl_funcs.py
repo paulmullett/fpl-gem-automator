@@ -288,7 +288,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
             hybrid_cbit = (fpl_cbit * trust_factor) + (prior_cbit * (1.0 - trust_factor))
             expected_actions = hybrid_cbit * mins_factor
             
-            prob_threshold = poisson_prob_ge(10, expected_actions)
+            prob_threshold = poisson_prob_ge(9, expected_actions)
             extra_defensive_points = (prob_threshold * 2.0) * prob_60
             
         elif pos_id in [3, 4]: # Midfielders / Forwards
@@ -299,7 +299,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
             hybrid_cbirt = (fpl_cbirt * trust_factor) + (prior_cbirt * (1.0 - trust_factor))
             expected_actions = hybrid_cbirt * mins_factor
             
-            prob_threshold = poisson_prob_ge(12, expected_actions)
+            prob_threshold = poisson_prob_ge(11, expected_actions)
             extra_defensive_points = (prob_threshold * 2.0) * prob_60
 
     # 4. Attacking Points with Value Multiplier

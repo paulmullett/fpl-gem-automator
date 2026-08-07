@@ -204,7 +204,7 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
         # Goalkeeper Budget Guardrail (Max £9.5m spend on GKs)
         prob += pulp.lpSum(
-            (players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * x[pid, t] 
+            (players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t)) * x[pid, t] 
             for pid in valid_pids if players[pid]["pos_id"] == 1
         ) <= 9.5
         
@@ -226,8 +226,8 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 cash_out = pulp.lpSum(players[pid]["cost"] * trans_in[pid, 0] for pid in valid_pids)
                 prob += bank_balance[0] == bank + cash_in - cash_out
         else:
-            future_cash_in = pulp.lpSum((players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * trans_out[pid, t] for pid in valid_pids)
-            future_cash_out = pulp.lpSum((players[pid]["cost"] + (players[pid].get("predicted_price_delta", 0.0) * t)) * trans_in[pid, t] for pid in valid_pids)
+            future_cash_in = pulp.lpSum((players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t)) * trans_out[pid, t] for pid in valid_pids)
+            future_cash_out = pulp.lpSum((players[pid]["cost"] + (players[pid].get("price_delta_prob", 0.0) * t)) * trans_in[pid, t] for pid in valid_pids)
             prob += bank_balance[t] == bank_balance[t-1] + future_cash_in - future_cash_out
 
         # Same-Team Goalkeeper Handshake Constraints
@@ -328,12 +328,57 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             team_name_str = next((p["team"] for p in players.values() if p.get("team_id") == peak_swing_team), str(peak_swing_team))
             transfer_plan.append(f"AUTOMATED SWING ALERT: {team_name_str} exhibits primary 4-GW fixture green wave.")
     else:
-        logger.warning("MPO Solver failed to find optimal path, falling back to position-balanced heuristic selection.")
+        logger.warning("MPO Solver failed to find optimal path, falling back to Constrained Greedy Heuristic.")
         valid_players = [p for p in players.values() if p.get("status") in ["a", "d", ""]]
-        gks = sorted([p for p in valid_players if p["pos_id"] == 1], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-        defs = sorted([p for p in valid_players if p["pos_id"] == 2], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-        mids = sorted([p for p in valid_players if p["pos_id"] == 3], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-        fwds = sorted([p for p in valid_players if p["pos_id"] == 4], key=lambda x: ev_matrix[x["id"]][0], reverse=True)
-        optimal_squad = gks[:2] + defs[:5] + mids[:5] + fwds[:3]
+        
+        # Sort all players by true 8-GW Expected Value
+        gks = sorted([p for p in valid_players if p["pos_id"] == 1], key=lambda x: sum(ev_matrix[x["id"]]), reverse=True)
+        defs = sorted([p for p in valid_players if p["pos_id"] == 2], key=lambda x: sum(ev_matrix[x["id"]]), reverse=True)
+        mids = sorted([p for p in valid_players if p["pos_id"] == 3], key=lambda x: sum(ev_matrix[x["id"]]), reverse=True)
+        fwds = sorted([p for p in valid_players if p["pos_id"] == 4], key=lambda x: sum(ev_matrix[x["id"]]), reverse=True)
+        
+        optimal_squad = []
+        current_budget = total_liquid_budget
+        
+        # 1. Allocate minimum viable base (2 GK, 5 DEF, 5 MID, 3 FWD) at cheapest prices
+        base_gks = sorted(gks, key=lambda x: x["cost"])[:2]
+        base_defs = sorted(defs, key=lambda x: x["cost"])[:5]
+        base_mids = sorted(mids, key=lambda x: x["cost"])[:5]
+        base_fwds = sorted(fwds, key=lambda x: x["cost"])[:3]
+        
+        base_squad = base_gks + base_defs + base_mids + base_fwds
+        base_cost = sum(p["cost"] for p in base_squad)
+        remaining_budget = current_budget - base_cost
+        
+        if remaining_budget < 0:
+            logger.error("Total market floor exceeds budget. Returning illegal raw heuristic.")
+            return base_squad, transfer_plan
+            
+        optimal_squad = base_squad.copy()
+        
+        # 2. Greedy Knapsack Upgrade Loop
+        # Repeatedly upgrade the weakest player in the squad to the highest EV player we can afford
+        upgrade_made = True
+        while upgrade_made:
+            upgrade_made = False
+            # Find the player in our squad with the lowest 8-GW EV
+            weakest_player = min(optimal_squad, key=lambda x: sum(ev_matrix[x["id"]]))
+            
+            # Find all available players in the same position
+            pos_pool = [p for p in valid_players if p["pos_id"] == weakest_player["pos_id"] and p["id"] not in [s["id"] for s in optimal_squad]]
+            # Filter for players we can afford with our remaining budget + the cost of the weakest player
+            affordable_upgrades = [p for p in pos_pool if p["cost"] <= (remaining_budget + weakest_player["cost"])]
+            
+            if affordable_upgrades:
+                # Pick the affordable player with the highest 8-GW EV
+                best_upgrade = max(affordable_upgrades, key=lambda x: sum(ev_matrix[x["id"]]))
+                
+                # If the upgrade is actually better than our weakest player, execute the swap
+                if sum(ev_matrix[best_upgrade["id"]]) > sum(ev_matrix[weakest_player["id"]]):
+                    remaining_budget += weakest_player["cost"]
+                    remaining_budget -= best_upgrade["cost"]
+                    optimal_squad.remove(weakest_player)
+                    optimal_squad.append(best_upgrade)
+                    upgrade_made = True
 
     return optimal_squad, transfer_plan
