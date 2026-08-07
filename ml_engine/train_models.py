@@ -321,7 +321,7 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     logger.info("Aligning FPL and FBref datasets for ML Pipeline...")
     
     top10k_eo_dict = get_livefpl_top10k_eo()
-    crowd_xmins_dict = get_crowdsourced_xmins(fpl_df)
+    crowd_xmins_dict, crowd_pts_dict = get_crowdsourced_data(fpl_df)
     
     custom_xmins_dict = {}
     xmins_env = os.getenv("XMINS_INPUT", "")
