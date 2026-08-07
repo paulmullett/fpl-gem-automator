@@ -1,14 +1,8 @@
 """
-fpl_compare_players.py — Head-to-Head Player Audit Tool
+fpl_compare_players.py — Head-to-Head Player Audit Tool (Multi-Period Matrix Aligned)
 
-Executes side-by-side player comparisons across 1-GW EV and 8-GW Deep-Tree Horizon xP.
-Features:
-- Unicode NFD decomposition to normalize accents (Estêvão -> Estevao, Ødegaard -> Odegaard).
-- Alias dictionary mapping shorthand inputs (KDB, TAA, VVD, Bruno).
-- Cross-position auditing support (e.g., DEF vs MID).
-- 8-GW Deep-Tree Horizon & Market Odds Integration.
-- Stochastic Risk Posture Gating (SHIELD / CHASE / NEUTRAL).
-- Formatted monospaced YAML table delivery directly to Discord.
+Executes side-by-side player comparisons across 1-GW EV, 8-GW Deep-Tree Horizon xP, 
+week-by-week EV/xMins matrices, and stochastic risk bounds from ml_projections.json.
 """
 
 import os
@@ -18,15 +12,12 @@ import requests
 import unicodedata
 
 from fpl_funcs import (
-    estimate_xmins, get_base_ev, get_macro_ev, 
-    get_ensemble_ev, normalize_player, get_gameweek_state,
-    get_live_price_deltas
+    estimate_xmins, normalize_player, get_gameweek_state, get_live_price_deltas
 )
-from fpl_odds_engine import get_market_adjustments
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
 PLAYER_COMPARE_INPUT = os.environ.get("PLAYER_COMPARE", "")
-# Parse comma-separated input from GitHub Actions
+
 if "," in PLAYER_COMPARE_INPUT:
     parts = PLAYER_COMPARE_INPUT.split(",")
     PLAYER_A_INPUT = parts[0].strip()
@@ -34,21 +25,13 @@ if "," in PLAYER_COMPARE_INPUT:
 else:
     PLAYER_A_INPUT = os.environ.get("PLAYER_A", "").strip()
     PLAYER_B_INPUT = os.environ.get("PLAYER_B", "").strip()
+
 RISK_POSTURE = os.environ.get("RISK_POSTURE", "NEUTRAL").upper()
 STATE_FILE_PATH = "fpl_state.json"
 
 if not DISCORD_WEBHOOK_URL or not PLAYER_A_INPUT or not PLAYER_B_INPUT:
     print("CRITICAL ERROR: Missing DISCORD_WEBHOOK_URL secret or player inputs.")
     sys.exit(1)
-
-def load_calibration_weights():
-    default_weights = {"xgi_weight": 0.70, "fdr_impact_factor": 0.10, "bench_discount": 0.01}
-    if os.path.exists(STATE_FILE_PATH):
-        try:
-            with open(STATE_FILE_PATH, "r") as f:
-                return json.load(f).get("calibration_weights", default_weights)
-        except Exception: pass
-    return default_weights
 
 def normalize_text(text: str) -> str:
     """Strips accents and normalizes special characters (Ø, Æ, ð, etc.)."""
@@ -67,27 +50,37 @@ COMMON_ALIASES = {
     "bruno": "fernandes"
 }
 
-def resolve_player(search_term: str, players: dict):
-    """Resolves player search term using exact, alias, or substring matching."""
+def resolve_player(search_term: str, players: dict, ml_proj_data: dict):
+    """Resolves player search term using exact, alias, or substring matching against projections & FPL data."""
     norm_term = normalize_text(search_term)
     if norm_term in COMMON_ALIASES: norm_term = COMMON_ALIASES[norm_term]
 
-    for p in players.values():
-        if norm_term in [normalize_text(p["name"]), normalize_text(p.get("full_name", ""))]:
-            return p, None
+    # Search by ID / Name mapping
+    for pid, p in players.items():
+        pid_str = str(pid)
+        ml_name = ml_proj_data.get(pid_str, {}).get("name", "")
+        if norm_term in [normalize_text(p["name"]), normalize_text(p.get("full_name", "")), normalize_text(ml_name)]:
+            return p, pid_str, None
 
-    candidates = [p for p in players.values() if norm_term in normalize_text(p["name"]) or norm_term in normalize_text(p.get("full_name", ""))]
-    if len(candidates) == 1: return candidates[0], None
+    candidates = []
+    for pid, p in players.items():
+        pid_str = str(pid)
+        ml_name = ml_proj_data.get(pid_str, {}).get("name", "")
+        if norm_term in normalize_text(p["name"]) or norm_term in normalize_text(p.get("full_name", "")) or norm_term in normalize_text(ml_name):
+            candidates.append((p, pid_str))
+
+    if len(candidates) == 1:
+        return candidates[0][0], candidates[0][1], None
     elif len(candidates) > 1:
-        exact_web = [c for c in candidates if normalize_text(c["name"]) == norm_term]
-        if len(exact_web) == 1: return exact_web[0], None
-        cand_list = ", ".join([f"**{c['name']}** ({c['team']})" for c in candidates[:5]])
-        return None, f"Multiple players matched '{search_term}': {cand_list}."
+        exact_web = [c for c in candidates if normalize_text(c[0]["name"]) == norm_term]
+        if len(exact_web) == 1: return exact_web[0][0], exact_web[0][1], None
+        cand_list = ", ".join([f"**{c[0]['name']}** ({c[0]['team']})" for c in candidates[:5]])
+        return None, None, f"Multiple players matched '{search_term}': {cand_list}."
 
-    return None, f"Could not resolve player '{search_term}'."
+    return None, None, f"Could not resolve player '{search_term}'."
 
 def fetch_data_and_compare():
-    headers = {"User-Agent": "FPL-Comparison-Tool/4.0"}
+    headers = {"User-Agent": "FPL-Comparison-Tool/5.0"}
     try:
         resp = requests.get("https://fantasy.premierleague.com/api/bootstrap-static/", headers=headers)
         if resp.status_code != 200: sys.exit(1)
@@ -105,72 +98,53 @@ def fetch_data_and_compare():
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
 
-    p1, err1 = resolve_player(PLAYER_A_INPUT, players)
-    p2, err2 = resolve_player(PLAYER_B_INPUT, players)
-
-    if err1 or err2:
-        err_msg = f"### ⚠️ PLAYER RESOLUTION FAILURE\n• {err1 or ''}\n• {err2 or ''}"
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": err_msg}); sys.exit(1)
-
-    market_data = get_market_adjustments()
-    weights = load_calibration_weights()
-
-    try:
-        fixtures_resp = requests.get("https://fantasy.premierleague.com/api/fixtures/", headers=headers)
-        fixtures_data = fixtures_resp.json() if fixtures_resp.status_code == 200 else []
-    except Exception: fixtures_data = []
-
-    # 8-GW Deep-Tree Fixture Horizon Scanning
-    team_fdr_sum = {t: 0 for t in teams.keys()}
-    team_fdr_count = {t: 0 for t in teams.keys()}
-    for f in fixtures_data:
-        event = f.get("event")
-        if event and target_gw <= event < target_gw + 8:
-            ta, th = f.get("team_a"), f.get("team_h")
-            if ta in team_fdr_sum: team_fdr_sum[ta] += f.get("team_a_difficulty", 3); team_fdr_count[ta] += 1
-            if th in team_fdr_sum: team_fdr_sum[th] += f.get("team_h_difficulty", 3); team_fdr_count[th] += 1
-    team_avg_fdr = {t: (team_fdr_sum[t] / team_fdr_count[t] if team_fdr_count[t] > 0 else 3.0) for t in teams.keys()}
-
-    # --- LOAD ML PROJECTIONS ---
+    # Load ML Projections generated by train_models.py
     ml_proj_data = {}
     if os.path.exists("ml_projections.json"):
         try:
             with open("ml_projections.json", "r") as f:
                 ml_proj_data = json.load(f)
-        except Exception: pass
+        except Exception as e:
+            print(f"WARNING: Could not load ml_projections.json: {e}")
 
-    # Player 1 Model Execution
-    pid1_str = str(p1["id"])
-    if pid1_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid1_str] and float(ml_proj_data[pid1_str]["ml_ev_1gw"]) > 0:
-        xmins1 = float(ml_proj_data[pid1_str].get("ml_xmins", estimate_xmins(p1)))
-        ev_1gw_1 = float(ml_proj_data[pid1_str]["ml_ev_1gw"])
-        macro_8gw_1 = float(ml_proj_data[pid1_str]["ml_ev_8gw"])
-    else:
-        xmins1 = estimate_xmins(p1)
-        ev_1gw_1 = get_ensemble_ev(p1, {}, market_data, weights, RISK_POSTURE)
-        macro_8gw_1 = get_macro_ev(p1, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
-        
+    p1, pid1_str, err1 = resolve_player(PLAYER_A_INPUT, players, ml_proj_data)
+    p2, pid2_str, err2 = resolve_player(PLAYER_B_INPUT, players, ml_proj_data)
+
+    if err1 or err2:
+        err_msg = f"### ⚠️ PLAYER RESOLUTION FAILURE\n• {err1 or ''}\n• {err2 or ''}"
+        requests.post(DISCORD_WEBHOOK_URL, json={"content": err_msg})
+        sys.exit(1)
+
+    # Extract metrics for Player 1
+    p1_proj = ml_proj_data.get(pid1_str, {})
+    ev_1gw_1 = float(p1_proj.get("ml_ev_1gw", p1.get("ep_next", 0.0)))
+    macro_8gw_1 = float(p1_proj.get("ml_ev_8gw", ev_1gw_1 * 8))
+    xmins1 = float(p1_proj.get("ml_xmins", estimate_xmins(p1)))
+    floor1 = float(p1_proj.get("mc_floor_ev", ev_1gw_1 * 0.7))
+    ceil1 = float(p1_proj.get("mc_ceiling_ev", ev_1gw_1 * 1.3))
+    ev_matrix_1 = p1_proj.get("ml_ev_matrix", [ev_1gw_1] * 8)
+    xmins_matrix_1 = p1_proj.get("ml_xmins_matrix", [xmins1] * 8)
     val_1gw_1 = ev_1gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
     val_8gw_1 = macro_8gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
 
-    # Player 2 Model Execution
-    pid2_str = str(p2["id"])
-    if pid2_str in ml_proj_data and "ml_ev_1gw" in ml_proj_data[pid2_str] and float(ml_proj_data[pid2_str]["ml_ev_1gw"]) > 0:
-        xmins2 = float(ml_proj_data[pid2_str].get("ml_xmins", estimate_xmins(p2)))
-        ev_1gw_2 = float(ml_proj_data[pid2_str]["ml_ev_1gw"])
-        macro_8gw_2 = float(ml_proj_data[pid2_str]["ml_ev_8gw"])
-    else:
-        xmins2 = estimate_xmins(p2)
-        ev_1gw_2 = get_ensemble_ev(p2, {}, market_data, weights, RISK_POSTURE)
-        macro_8gw_2 = get_macro_ev(p2, team_avg_fdr, weights, {}, market_data, 8, RISK_POSTURE)
-        
+    # Extract metrics for Player 2
+    p2_proj = ml_proj_data.get(pid2_str, {})
+    ev_1gw_2 = float(p2_proj.get("ml_ev_1gw", p2.get("ep_next", 0.0)))
+    macro_8gw_2 = float(p2_proj.get("ml_ev_8gw", ev_1gw_2 * 8))
+    xmins2 = float(p2_proj.get("ml_xmins", estimate_xmins(p2)))
+    floor2 = float(p2_proj.get("mc_floor_ev", ev_1gw_2 * 0.7))
+    ceil2 = float(p2_proj.get("mc_ceiling_ev", ev_1gw_2 * 1.3))
+    ev_matrix_2 = p2_proj.get("ml_ev_matrix", [ev_1gw_2] * 8)
+    xmins_matrix_2 = p2_proj.get("ml_xmins_matrix", [xmins2] * 8)
     val_1gw_2 = ev_1gw_2 / p2["cost"] if p2["cost"] > 0 else 0.0
     val_8gw_2 = macro_8gw_2 / p2["cost"] if p2["cost"] > 0 else 0.0
 
-    diff_1gw, diff_8gw = abs(ev_1gw_1 - ev_1gw_2), abs(macro_8gw_1 - macro_8gw_2)
+    diff_1gw = abs(ev_1gw_1 - ev_1gw_2)
+    diff_8gw = abs(macro_8gw_1 - macro_8gw_2)
     winner = p1['name'] if macro_8gw_1 > macro_8gw_2 else (p2['name'] if macro_8gw_2 > macro_8gw_1 else "Equal")
-    rec = f"{winner} projects higher structural value (+{diff_1gw:.2f} 1-GW EV | +{diff_8gw:.2f} 8-GW xP)."
-    if p1["pos"] != p2["pos"]: rec += f" [Cross-Position Audit: {p1['pos']} vs. {p2['pos']}]"
+    rec = f"**{winner}** projects higher 8-GW structural value (+{diff_1gw:.2f} 1-GW EV | +{diff_8gw:.2f} 8-GW xP)."
+    if p1["pos"] != p2["pos"]: 
+        rec += f" [Cross-Position Audit: {p1['pos']} vs. {p2['pos']}]"
 
     def price_trend_str(prob):
         if prob > 0.0: return "Rising (+£0.1m)"
@@ -183,30 +157,39 @@ def fetch_data_and_compare():
     def fmt_row(lbl, v1, v2):
         return f" {lbl:<24} | {str(v1):<25} | {str(v2):<25}\n"
 
+    def fmt_matrix(mat):
+        return "[" + ", ".join([f"{x:.1f}" for x in mat[:8]]) + "]"
+
     ascii_table = "```yaml\n"
     ascii_table += "================================================================================\n"
-    ascii_table += "               HEAD-TO-HEAD QUANTITATIVE PLAYER AUDIT (GW " + str(target_gw) + ")\n"
+    ascii_table += f" HEAD-TO-HEAD QUANTITATIVE PLAYER AUDIT (GW {target_gw})\n"
     ascii_table += "================================================================================\n"
     ascii_table += fmt_row("METRIC", p1_str, p2_str)
     ascii_table += "--------------------------------------------------------------------------------\n"
     ascii_table += fmt_row("Position", p1["pos"], p2["pos"])
     ascii_table += fmt_row("Cost", f"£{p1['cost']:.1f}m", f"£{p2['cost']:.1f}m")
     ascii_table += fmt_row("Ownership", f"{p1['own']:.1f}%", f"{p2['own']:.1f}%")
+    ascii_table += fmt_row("Top 10k EO", f"{p1_proj.get('top_10k_eo', p1['own']):.1f}%", f"{p2_proj.get('top_10k_eo', p2['own']):.1f}%")
     ascii_table += fmt_row("Price Delta Trend", price_trend_str(p1["price_delta_prob"]), price_trend_str(p2["price_delta_prob"]))
-    ascii_table += fmt_row("Proj. Expected Mins", f"{xmins1:.1f} xMins", f"{xmins2:.1f} xMins")
+    ascii_table += fmt_row("Baseline xMins", f"{xmins1:.1f}", f"{xmins2:.1f}")
     ascii_table += fmt_row("Adjusted xGI / 90", f"{p1['xgi_90']:.2f}", f"{p2['xgi_90']:.2f}")
     ascii_table += "--------------------------------------------------------------------------------\n"
-    ascii_table += fmt_row("1-GW EV (Odds-Adjusted)", f"{ev_1gw_1:.2f} pts", f"{ev_1gw_2:.2f} pts")
-    ascii_table += fmt_row("8-GW Deep Horizon xP", f"{macro_8gw_1:.2f} pts", f"{macro_8gw_2:.2f} pts")
+    ascii_table += fmt_row("1-GW Expected Yield", f"{ev_1gw_1:.2f} pts", f"{ev_1gw_2:.2f} pts")
+    ascii_table += fmt_row("8-GW Horizon xP", f"{macro_8gw_1:.2f} pts", f"{macro_8gw_2:.2f} pts")
+    ascii_table += fmt_row("Stochastic Floor/Ceil", f"{floor1:.1f} / {ceil1:.1f}", f"{floor2:.1f} / {ceil2:.1f}")
     ascii_table += fmt_row("1-GW Value (EV / £m)", f"{val_1gw_1:.2f} pts/£m", f"{val_1gw_2:.2f} pts/£m")
     ascii_table += fmt_row("8-GW Value (xP / £m)", f"{val_8gw_1:.2f} pts/£m", f"{val_8gw_2:.2f} pts/£m")
+    ascii_table += "--------------------------------------------------------------------------------\n"
+    ascii_table += fmt_row("8-GW EV Matrix", fmt_matrix(ev_matrix_1), fmt_matrix(ev_matrix_2))
+    ascii_table += fmt_row("8-GW xMins Matrix", fmt_matrix(xmins_matrix_1), fmt_matrix(xmins_matrix_2))
     ascii_table += "================================================================================\n"
     ascii_table += f" Risk Posture: {RISK_POSTURE}\n"
-    ascii_table += f" Model Recommendation: {rec}\n"
+    ascii_table += f" Algorithmic Recommendation: {rec}\n"
     ascii_table += "================================================================================\n"
     ascii_table += "```"
 
     requests.post(DISCORD_WEBHOOK_URL, json={"content": ascii_table})
+    print("Head-to-head audit delivered successfully to Discord.")
 
 if __name__ == "__main__":
     fetch_data_and_compare()
