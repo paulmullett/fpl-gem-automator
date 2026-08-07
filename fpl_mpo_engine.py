@@ -127,15 +127,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
     is_fresh_squad = len(initial_owned) == 0
 
-    # Define the Opportunity Cost of burning the first Wildcard
-    WILDCARD_OPPORTUNITY_COST = 14.0 
+    # Define the Opportunity Cost of burning chips early (Based on late-season Double GW yields)
+    WILDCARD_OPPORTUNITY_COST = 14.0
+    TC_OPPORTUNITY_COST = 12.0      # E.g., Haaland Double Gameweek bonus
+    BB_OPPORTUNITY_COST = 16.0      # E.g., 4 playing bench players in a Double Gameweek
 
     # --- PRIMARY OPTIMIZATION LOOP ---
     for t in range(horizons):
         t_weight = discount_factor ** t
         
-        # Penalize Wildcard usage to simulate long-term holding value
+        # Penalize all chip usage to simulate long-term holding value outside the 8-GW window
         objective_terms.append(-1.0 * WILDCARD_OPPORTUNITY_COST * y_wc[t])
+        objective_terms.append(-1.0 * TC_OPPORTUNITY_COST * y_tc[t])
+        objective_terms.append(-1.0 * BB_OPPORTUNITY_COST * y_bb[t])
 
         adjusted_evs = {}
         for pid in valid_pids:
