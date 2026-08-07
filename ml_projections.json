@@ -3236,7 +3236,7 @@
         "ml_ev_8gw": 18.08,
         "mc_floor_ev": 1.04,
         "mc_ceiling_ev": 3.79,
-        "top_10k_eo": 1.1,
+        "top_10k_eo": 1.2,
         "predicted_price_delta": 0.0
     },
     "109": {
@@ -3656,7 +3656,7 @@
         "ml_ev_8gw": 30.19,
         "mc_floor_ev": 2.29,
         "mc_ceiling_ev": 6.77,
-        "top_10k_eo": 8.7,
+        "top_10k_eo": 8.8,
         "predicted_price_delta": 0.0
     },
     "125": {
@@ -6416,7 +6416,7 @@
         "ml_ev_8gw": 18.67,
         "mc_floor_ev": 0.26,
         "mc_ceiling_ev": 4.54,
-        "top_10k_eo": 0.2,
+        "top_10k_eo": 0.1,
         "predicted_price_delta": 0.0
     },
     "210": {
@@ -8756,7 +8756,7 @@
         "ml_ev_8gw": 17.79,
         "mc_floor_ev": 0.44,
         "mc_ceiling_ev": 4.3,
-        "top_10k_eo": 0.5,
+        "top_10k_eo": 0.6,
         "predicted_price_delta": 0.0
     },
     "287": {
@@ -10122,20 +10122,20 @@
             75.0,
             75.0
         ],
-        "ml_ev_1gw": 2.16,
+        "ml_ev_1gw": 2.15,
         "ml_ev_matrix": [
-            2.16,
-            2.16,
-            2.16,
-            2.16,
-            2.16,
-            2.16,
-            2.16,
-            2.16
+            2.15,
+            2.15,
+            2.15,
+            2.15,
+            2.15,
+            2.15,
+            2.15,
+            2.15
         ],
-        "ml_ev_8gw": 17.28,
+        "ml_ev_8gw": 17.2,
         "mc_floor_ev": 0.99,
-        "mc_ceiling_ev": 3.62,
+        "mc_ceiling_ev": 3.6,
         "top_10k_eo": 0.0,
         "predicted_price_delta": 0.0
     },
@@ -13376,7 +13376,7 @@
         "ml_ev_8gw": 31.75,
         "mc_floor_ev": 2.19,
         "mc_ceiling_ev": 7.81,
-        "top_10k_eo": 14.1,
+        "top_10k_eo": 14.0,
         "predicted_price_delta": 0.0
     },
     "429": {
@@ -16376,7 +16376,7 @@
         "ml_ev_8gw": 30.91,
         "mc_floor_ev": 2.27,
         "mc_ceiling_ev": 6.45,
-        "top_10k_eo": 2.7,
+        "top_10k_eo": 2.8,
         "predicted_price_delta": 0.0
     },
     "527": {
