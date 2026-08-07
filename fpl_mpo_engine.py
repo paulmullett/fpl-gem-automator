@@ -127,9 +127,15 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
     is_fresh_squad = len(initial_owned) == 0
 
+    # Define the Opportunity Cost of burning the first Wildcard
+    WILDCARD_OPPORTUNITY_COST = 14.0 
+
     # --- PRIMARY OPTIMIZATION LOOP ---
     for t in range(horizons):
         t_weight = discount_factor ** t
+        
+        # Penalize Wildcard usage to simulate long-term holding value
+        objective_terms.append(-1.0 * WILDCARD_OPPORTUNITY_COST * y_wc[t])
 
         adjusted_evs = {}
         for pid in valid_pids:
