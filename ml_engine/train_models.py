@@ -432,25 +432,36 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     projections = {}
     crowd_xmins_dict, crowd_evs_dict = get_crowdsourced_data(fpl_df)
 
+    crowd_xmins_dict, crowd_evs_dict = get_crowdsourced_data(fpl_df)
+
     for idx, row in df.iterrows():
+        # Define player_obj directly from the DataFrame row
+        player_obj = row.to_dict()
         pid_int = int(row['id'])
         pid = str(pid_int)
         web_name = str(row.get('web_name', 'Unknown'))
+        web_name_clean = web_name.lower().strip()
         
-        # ... [Keep existing EO and Price Delta calculation logic] ...
+        # Calculate Effective Ownership (EO) and Price Delta
+        top_10k_eo = float(row.get('selected_by_percent', 0.0))
+        predicted_delta = float(row.get('price_delta_prob', 0.0))
 
+        # Estimate baseline expected minutes
         original_xmins = estimate_xmins(player_obj)
         
         # Retrieve crowdsourced xMins and EV arrays if available
-        raw_xmins_list = crowd_xmins_dict.get(pid_int, [original_xmins] * 8)
-        raw_ev_list = crowd_evs_dict.get(pid_int, None)
+        raw_xmins_list = crowd_xmins_dict.get(pid_int, crowd_xmins_dict.get(web_name, [original_xmins] * 8))
+        raw_ev_list = crowd_evs_dict.get(pid_int, crowd_evs_dict.get(web_name, None))
 
         # Handle Human Overrides passed via XMINS_INPUT
-        if web_name.lower() in custom_xmins_dict or strip_accents(web_name) in custom_xmins_dict:
-            override_val = custom_xmins_dict.get(web_name.lower(), custom_xmins_dict.get(strip_accents(web_name)))
-            raw_xmins_list = [float(override_val)] * 8
+        if 'custom_xmins_dict' in locals() or 'custom_xmins_dict' in globals():
+            if web_name_clean in custom_xmins_dict:
+                override_val = custom_xmins_dict[web_name_clean]
+                raw_xmins_list = [float(override_val)] * 8
 
-        # Ensure arrays are exactly 8 items long
+        # Ensure arrays are valid 8-element lists
+        if not isinstance(raw_xmins_list, list):
+            raw_xmins_list = [float(raw_xmins_list)] * 8
         if len(raw_xmins_list) < 8:
             raw_xmins_list += [raw_xmins_list[-1]] * (8 - len(raw_xmins_list))
         raw_xmins_list = raw_xmins_list[:8]
@@ -461,19 +472,19 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
         for t in range(8):
             target_xmins = min(90.0, float(raw_xmins_list[t]))
             
-            if raw_ev_list and len(raw_ev_list) >= 8:
-                # Use the exact 8-GW point projection from the CSV
+            if raw_ev_list and isinstance(raw_ev_list, list) and len(raw_ev_list) >= 8:
+                # Primary Route: Use 8-GW point projection from FPLReview CSV
                 base_ev_t = float(raw_ev_list[t])
                 
                 # Rescale EV if a human override modified xMins for this gameweek
                 orig_csv_mins = max(1.0, float(raw_xmins_list[t]))
-                if web_name.lower() in custom_xmins_dict or strip_accents(web_name) in custom_xmins_dict:
+                if ('custom_xmins_dict' in locals() or 'custom_xmins_dict' in globals()) and web_name_clean in custom_xmins_dict:
                     calculated_ev = base_ev_t * (target_xmins / orig_csv_mins)
                 else:
                     calculated_ev = base_ev_t
             else:
-                # Heuristic fallback if CSV player match is missing
-                base_ev = row['ml_base_ev']
+                # Fallback Route: Internal heuristic calculation
+                base_ev = float(row.get('ml_base_ev', row.get('ep_next', 2.0)))
                 prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (target_xmins - 60.0)))
                 app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
                 attacking_ev = max(0.0, base_ev - 2.0) * (target_xmins / 90.0)
