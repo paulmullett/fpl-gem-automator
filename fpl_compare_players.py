@@ -10,33 +10,73 @@ import sys
 import json
 import requests
 import unicodedata
+import re
 
 from fpl_funcs import (
     estimate_xmins, normalize_player, get_gameweek_state, get_live_price_deltas
 )
 
 DISCORD_WEBHOOK_URL = os.environ.get("DISCORD_WEBHOOK_URL")
-PLAYER_COMPARE_INPUT = os.environ.get("PLAYER_COMPARE", "")
+PLAYER_COMPARE_INPUT = os.environ.get("PLAYER_COMPARE", "").strip()
 
+# Flexible Input Parsing: supports comma, 'vs', 'v', or space-delimited inputs
 if "," in PLAYER_COMPARE_INPUT:
     parts = PLAYER_COMPARE_INPUT.split(",")
     PLAYER_A_INPUT = parts[0].strip()
     PLAYER_B_INPUT = parts[1].strip()
+elif " vs " in PLAYER_COMPARE_INPUT.lower():
+    parts = re.split(r'\svs\s', PLAYER_COMPARE_INPUT, flags=re.IGNORECASE)
+    PLAYER_A_INPUT = parts[0].strip()
+    PLAYER_B_INPUT = parts[1].strip()
+elif " v " in PLAYER_COMPARE_INPUT.lower():
+    parts = re.split(r'\sv\s', PLAYER_COMPARE_INPUT, flags=re.IGNORECASE)
+    PLAYER_A_INPUT = parts[0].strip()
+    PLAYER_B_INPUT = parts[1].strip()
 else:
-    PLAYER_A_INPUT = os.environ.get("PLAYER_A", "").strip()
-    PLAYER_B_INPUT = os.environ.get("PLAYER_B", "").strip()
+    parts = PLAYER_COMPARE_INPUT.split()
+    if len(parts) >= 2:
+        PLAYER_A_INPUT = parts[0].strip()
+        PLAYER_B_INPUT = parts[1].strip()
+    else:
+        PLAYER_A_INPUT = os.environ.get("PLAYER_A", "").strip()
+        PLAYER_B_INPUT = os.environ.get("PLAYER_B", "").strip()
 
 RISK_POSTURE = os.environ.get("RISK_POSTURE", "NEUTRAL").upper()
-STATE_FILE_PATH = "fpl_state.json"
 
 if not DISCORD_WEBHOOK_URL or not PLAYER_A_INPUT or not PLAYER_B_INPUT:
-    print("CRITICAL ERROR: Missing DISCORD_WEBHOOK_URL secret or player inputs.")
+    print(f"CRITICAL ERROR: Missing DISCORD_WEBHOOK_URL secret or valid player inputs. Received: '{PLAYER_COMPARE_INPUT}'")
     sys.exit(1)
+
+def send_to_discord(webhook_url, content):
+    """Delivers output to Discord with payload safety checks and error handling."""
+    if len(content) <= 1900:
+        resp = requests.post(webhook_url, json={"content": content})
+        if resp.status_code >= 400:
+            print(f"ERROR: Discord Webhook rejected payload (HTTP {resp.status_code}): {resp.text}")
+        else:
+            print("Head-to-head audit delivered successfully to Discord.")
+    else:
+        lines = content.split("\n")
+        chunk = ""
+        for line in lines:
+            if len(chunk) + len(line) + 1 > 1850:
+                resp = requests.post(webhook_url, json={"content": chunk})
+                if resp.status_code >= 400:
+                    print(f"ERROR: Discord Webhook rejected chunk (HTTP {resp.status_code}): {resp.text}")
+                chunk = line + "\n"
+            else:
+                chunk += line + "\n"
+        if chunk.strip():
+            resp = requests.post(webhook_url, json={"content": chunk})
+            if resp.status_code >= 400:
+                print(f"ERROR: Discord Webhook rejected final chunk (HTTP {resp.status_code}): {resp.text}")
+            else:
+                print("Head-to-head audit delivered successfully to Discord.")
 
 def normalize_text(text: str) -> str:
     """Strips accents and normalizes special characters (Ø, Æ, ð, etc.)."""
     if not text: return ""
-    nfkd_form = unicodedata.normalize('NFD', text)
+    nfkd_form = unicodedata.normalize('NFD', str(text))
     clean_text = ''.join([c for c in nfkd_form if not unicodedata.combining(c)])
     char_map = {'ø': 'o', 'Ø': 'O', 'æ': 'ae', 'Æ': 'AE', 'ð': 'd', 'Ð': 'D', 'ß': 'ss'}
     for char, repl in char_map.items(): clean_text = clean_text.replace(char, repl)
@@ -50,30 +90,47 @@ COMMON_ALIASES = {
     "bruno": "fernandes"
 }
 
-def resolve_player(search_term: str, players: dict, ml_proj_data: dict):
-    """Resolves player search term using exact, alias, or substring matching against projections & FPL data."""
+def resolve_player(search_term: str, raw_elements: list, players: dict, ml_proj_data: dict):
+    """Resolves player search term using exact, alias, or substring matching."""
     norm_term = normalize_text(search_term)
-    if norm_term in COMMON_ALIASES: norm_term = COMMON_ALIASES[norm_term]
+    if not norm_term:
+        return None, None, f"Empty search term provided."
+    if norm_term in COMMON_ALIASES:
+        norm_term = COMMON_ALIASES[norm_term]
 
-    # Search by ID / Name mapping
-    for pid, p in players.items():
+    # Exact Match Pass
+    for raw_p in raw_elements:
+        pid = raw_p["id"]
         pid_str = str(pid)
-        ml_name = ml_proj_data.get(pid_str, {}).get("name", "")
-        if norm_term in [normalize_text(p["name"]), normalize_text(p.get("full_name", "")), normalize_text(ml_name)]:
-            return p, pid_str, None
+        web_name = normalize_text(raw_p.get("web_name", ""))
+        first_name = normalize_text(raw_p.get("first_name", ""))
+        second_name = normalize_text(raw_p.get("second_name", ""))
+        full_name = f"{first_name} {second_name}".strip()
+        ml_name = normalize_text(ml_proj_data.get(pid_str, {}).get("name", ""))
 
+        if norm_term in [web_name, full_name, ml_name]:
+            return players[pid], pid_str, None
+
+    # Substring Match Pass
     candidates = []
-    for pid, p in players.items():
+    for raw_p in raw_elements:
+        pid = raw_p["id"]
         pid_str = str(pid)
-        ml_name = ml_proj_data.get(pid_str, {}).get("name", "")
-        if norm_term in normalize_text(p["name"]) or norm_term in normalize_text(p.get("full_name", "")) or norm_term in normalize_text(ml_name):
-            candidates.append((p, pid_str))
+        web_name = normalize_text(raw_p.get("web_name", ""))
+        first_name = normalize_text(raw_p.get("first_name", ""))
+        second_name = normalize_text(raw_p.get("second_name", ""))
+        full_name = f"{first_name} {second_name}".strip()
+        ml_name = normalize_text(ml_proj_data.get(pid_str, {}).get("name", ""))
+
+        if (norm_term in web_name) or (norm_term in full_name) or (norm_term in ml_name):
+            candidates.append((players[pid], pid_str))
 
     if len(candidates) == 1:
         return candidates[0][0], candidates[0][1], None
     elif len(candidates) > 1:
         exact_web = [c for c in candidates if normalize_text(c[0]["name"]) == norm_term]
-        if len(exact_web) == 1: return exact_web[0][0], exact_web[0][1], None
+        if len(exact_web) == 1:
+            return exact_web[0][0], exact_web[0][1], None
         cand_list = ", ".join([f"**{c[0]['name']}** ({c[0]['team']})" for c in candidates[:5]])
         return None, None, f"Multiple players matched '{search_term}': {cand_list}."
 
@@ -89,16 +146,16 @@ def fetch_data_and_compare():
         print(f"CRITICAL ERROR: {e}"); sys.exit(1)
 
     active_gw, target_gw = get_gameweek_state(bootstrap_data)
+    raw_elements = bootstrap_data.get("elements", [])
     teams = {t["id"]: t["short_name"] for t in bootstrap_data["teams"]}
     element_types = {e["id"]: e["singular_name_short"] for e in bootstrap_data["element_types"]}
 
-    players = {raw_p["id"]: normalize_player(raw_p, teams, element_types) for raw_p in bootstrap_data.get("elements", [])}
+    players = {raw_p["id"]: normalize_player(raw_p, teams, element_types) for raw_p in raw_elements}
 
     price_deltas = get_live_price_deltas(players)
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
 
-    # Load ML Projections generated by train_models.py
     ml_proj_data = {}
     if os.path.exists("ml_projections.json"):
         try:
@@ -107,15 +164,15 @@ def fetch_data_and_compare():
         except Exception as e:
             print(f"WARNING: Could not load ml_projections.json: {e}")
 
-    p1, pid1_str, err1 = resolve_player(PLAYER_A_INPUT, players, ml_proj_data)
-    p2, pid2_str, err2 = resolve_player(PLAYER_B_INPUT, players, ml_proj_data)
+    p1, pid1_str, err1 = resolve_player(PLAYER_A_INPUT, raw_elements, players, ml_proj_data)
+    p2, pid2_str, err2 = resolve_player(PLAYER_B_INPUT, raw_elements, players, ml_proj_data)
 
     if err1 or err2:
         err_msg = f"### ⚠️ PLAYER RESOLUTION FAILURE\n• {err1 or ''}\n• {err2 or ''}"
-        requests.post(DISCORD_WEBHOOK_URL, json={"content": err_msg})
+        send_to_discord(DISCORD_WEBHOOK_URL, err_msg)
         sys.exit(1)
 
-    # Extract metrics for Player 1
+    # Extract Metrics for Player 1
     p1_proj = ml_proj_data.get(pid1_str, {})
     ev_1gw_1 = float(p1_proj.get("ml_ev_1gw", p1.get("ep_next", 0.0)))
     macro_8gw_1 = float(p1_proj.get("ml_ev_8gw", ev_1gw_1 * 8))
@@ -127,7 +184,7 @@ def fetch_data_and_compare():
     val_1gw_1 = ev_1gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
     val_8gw_1 = macro_8gw_1 / p1["cost"] if p1["cost"] > 0 else 0.0
 
-    # Extract metrics for Player 2
+    # Extract Metrics for Player 2
     p2_proj = ml_proj_data.get(pid2_str, {})
     ev_1gw_2 = float(p2_proj.get("ml_ev_1gw", p2.get("ep_next", 0.0)))
     macro_8gw_2 = float(p2_proj.get("ml_ev_8gw", ev_1gw_2 * 8))
@@ -142,9 +199,9 @@ def fetch_data_and_compare():
     diff_1gw = abs(ev_1gw_1 - ev_1gw_2)
     diff_8gw = abs(macro_8gw_1 - macro_8gw_2)
     winner = p1['name'] if macro_8gw_1 > macro_8gw_2 else (p2['name'] if macro_8gw_2 > macro_8gw_1 else "Equal")
-    rec = f"**{winner}** projects higher 8-GW structural value (+{diff_1gw:.2f} 1-GW EV | +{diff_8gw:.2f} 8-GW xP)."
+    rec = f"{winner} projects higher 8-GW structural value (+{diff_1gw:.2f} 1-GW EV | +{diff_8gw:.2f} 8-GW xP)."
     if p1["pos"] != p2["pos"]: 
-        rec += f" [Cross-Position Audit: {p1['pos']} vs. {p2['pos']}]"
+        rec += f" [{p1['pos']} vs. {p2['pos']}]"
 
     def price_trend_str(prob):
         if prob > 0.0: return "Rising (+£0.1m)"
@@ -155,7 +212,7 @@ def fetch_data_and_compare():
     p2_str = f"{p2['name']} ({p2['team']})"
 
     def fmt_row(lbl, v1, v2):
-        return f" {lbl:<24} | {str(v1):<25} | {str(v2):<25}\n"
+        return f" {lbl:<22} | {str(v1):<24} | {str(v2):<24}\n"
 
     def fmt_matrix(mat):
         return "[" + ", ".join([f"{x:.1f}" for x in mat[:8]]) + "]"
@@ -177,19 +234,17 @@ def fetch_data_and_compare():
     ascii_table += fmt_row("1-GW Expected Yield", f"{ev_1gw_1:.2f} pts", f"{ev_1gw_2:.2f} pts")
     ascii_table += fmt_row("8-GW Horizon xP", f"{macro_8gw_1:.2f} pts", f"{macro_8gw_2:.2f} pts")
     ascii_table += fmt_row("Stochastic Floor/Ceil", f"{floor1:.1f} / {ceil1:.1f}", f"{floor2:.1f} / {ceil2:.1f}")
-    ascii_table += fmt_row("1-GW Value (EV / £m)", f"{val_1gw_1:.2f} pts/£m", f"{val_1gw_2:.2f} pts/£m")
-    ascii_table += fmt_row("8-GW Value (xP / £m)", f"{val_8gw_1:.2f} pts/£m", f"{val_8gw_2:.2f} pts/£m")
+    ascii_table += fmt_row("1-GW Value (EV/£m)", f"{val_1gw_1:.2f}", f"{val_1gw_2:.2f}")
+    ascii_table += fmt_row("8-GW Value (xP/£m)", f"{val_8gw_1:.2f}", f"{val_8gw_2:.2f}")
     ascii_table += "--------------------------------------------------------------------------------\n"
     ascii_table += fmt_row("8-GW EV Matrix", fmt_matrix(ev_matrix_1), fmt_matrix(ev_matrix_2))
     ascii_table += fmt_row("8-GW xMins Matrix", fmt_matrix(xmins_matrix_1), fmt_matrix(xmins_matrix_2))
     ascii_table += "================================================================================\n"
-    ascii_table += f" Risk Posture: {RISK_POSTURE}\n"
-    ascii_table += f" Algorithmic Recommendation: {rec}\n"
+    ascii_table += f" Posture: {RISK_POSTURE} | Rec: {rec}\n"
     ascii_table += "================================================================================\n"
     ascii_table += "```"
 
-    requests.post(DISCORD_WEBHOOK_URL, json={"content": ascii_table})
-    print("Head-to-head audit delivered successfully to Discord.")
+    send_to_discord(DISCORD_WEBHOOK_URL, ascii_table)
 
 if __name__ == "__main__":
     fetch_data_and_compare()
