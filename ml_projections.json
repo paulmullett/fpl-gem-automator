@@ -599,36 +599,6 @@
         "top_10k_eo": 0.2,
         "predicted_price_delta": 0.0
     },
-    "21": {
-        "name": "N\u00f8rgaard",
-        "ml_xmins": 8.0,
-        "ml_xmins_matrix": [
-            8.0,
-            7.0,
-            7.0,
-            7.0,
-            7.0,
-            8.0,
-            8.0,
-            9.0
-        ],
-        "ml_ev_1gw": 0.45,
-        "ml_ev_matrix": [
-            0.45,
-            0.34,
-            0.33,
-            0.34,
-            0.35,
-            0.4,
-            0.4,
-            0.46
-        ],
-        "ml_ev_8gw": 3.07,
-        "mc_floor_ev": 0.04,
-        "mc_ceiling_ev": 0.96,
-        "top_10k_eo": 0.4,
-        "predicted_price_delta": 0.0
-    },
     "22": {
         "name": "Nwaneri",
         "ml_xmins": 9.0,
@@ -2459,6 +2429,36 @@
         "top_10k_eo": 0.1,
         "predicted_price_delta": 0.0
     },
+    "573": {
+        "name": "Sanchez",
+        "ml_xmins": 6.8,
+        "ml_xmins_matrix": [
+            6.8,
+            6.8,
+            6.8,
+            6.8,
+            6.8,
+            6.8,
+            6.8,
+            6.8
+        ],
+        "ml_ev_1gw": 0.16,
+        "ml_ev_matrix": [
+            0.16,
+            0.16,
+            0.16,
+            0.16,
+            0.16,
+            0.16,
+            0.16,
+            0.16
+        ],
+        "ml_ev_8gw": 1.28,
+        "mc_floor_ev": 0.06,
+        "mc_ceiling_ev": 0.28,
+        "top_10k_eo": 0.0,
+        "predicted_price_delta": 0.0
+    },
     "82": {
         "name": "Kelleher",
         "ml_xmins": 90.0,
@@ -3222,20 +3222,20 @@
             75.0,
             75.0
         ],
-        "ml_ev_1gw": 2.25,
+        "ml_ev_1gw": 2.26,
         "ml_ev_matrix": [
-            2.25,
-            2.25,
-            2.25,
-            2.25,
-            2.25,
-            2.25,
-            2.25,
-            2.25
+            2.26,
+            2.26,
+            2.26,
+            2.26,
+            2.26,
+            2.26,
+            2.26,
+            2.26
         ],
-        "ml_ev_8gw": 18.0,
+        "ml_ev_8gw": 18.08,
         "mc_floor_ev": 1.04,
-        "mc_ceiling_ev": 3.77,
+        "mc_ceiling_ev": 3.79,
         "top_10k_eo": 1.1,
         "predicted_price_delta": 0.0
     },
@@ -5202,20 +5202,20 @@
             75.0,
             75.0
         ],
-        "ml_ev_1gw": 2.33,
+        "ml_ev_1gw": 2.32,
         "ml_ev_matrix": [
-            2.33,
-            2.33,
-            2.33,
-            2.33,
-            2.33,
-            2.33,
-            2.33,
-            2.33
+            2.32,
+            2.32,
+            2.32,
+            2.32,
+            2.32,
+            2.32,
+            2.32,
+            2.32
         ],
-        "ml_ev_8gw": 18.64,
+        "ml_ev_8gw": 18.56,
         "mc_floor_ev": 1.07,
-        "mc_ceiling_ev": 3.9,
+        "mc_ceiling_ev": 3.89,
         "top_10k_eo": 0.0,
         "predicted_price_delta": 0.0
     },
@@ -6927,6 +6927,36 @@
         "mc_floor_ev": 0.0,
         "mc_ceiling_ev": 0.0,
         "top_10k_eo": 1.7,
+        "predicted_price_delta": 0.0
+    },
+    "21": {
+        "name": "N\u00f8rgaard",
+        "ml_xmins": 8.0,
+        "ml_xmins_matrix": [
+            8.0,
+            7.0,
+            7.0,
+            7.0,
+            7.0,
+            8.0,
+            8.0,
+            9.0
+        ],
+        "ml_ev_1gw": 0.45,
+        "ml_ev_matrix": [
+            0.45,
+            0.34,
+            0.33,
+            0.34,
+            0.35,
+            0.4,
+            0.4,
+            0.46
+        ],
+        "ml_ev_8gw": 3.07,
+        "mc_floor_ev": 0.04,
+        "mc_ceiling_ev": 0.96,
+        "top_10k_eo": 0.4,
         "predicted_price_delta": 0.0
     },
     "226": {
@@ -10736,7 +10766,7 @@
         "ml_ev_8gw": 28.03,
         "mc_floor_ev": 2.23,
         "mc_ceiling_ev": 5.9,
-        "top_10k_eo": 23.2,
+        "top_10k_eo": 23.3,
         "predicted_price_delta": 0.0
     },
     "347": {
@@ -10827,6 +10857,36 @@
         "mc_floor_ev": 0.0,
         "mc_ceiling_ev": 0.0,
         "top_10k_eo": 0.3,
+        "predicted_price_delta": 0.0
+    },
+    "385": {
+        "name": "Trafford",
+        "ml_xmins": 0.0,
+        "ml_xmins_matrix": [
+            0.0,
+            1.0,
+            2.0,
+            3.0,
+            2.0,
+            2.0,
+            4.0,
+            3.0
+        ],
+        "ml_ev_1gw": 0.0,
+        "ml_ev_matrix": [
+            0.0,
+            0.06,
+            0.07,
+            0.1,
+            0.1,
+            0.08,
+            0.16,
+            0.13
+        ],
+        "ml_ev_8gw": 0.7,
+        "mc_floor_ev": 0.0,
+        "mc_ceiling_ev": 0.0,
+        "top_10k_eo": 1.6,
         "predicted_price_delta": 0.0
     },
     "350": {
@@ -11396,7 +11456,7 @@
         "ml_ev_8gw": 37.69,
         "mc_floor_ev": 2.61,
         "mc_ceiling_ev": 7.42,
-        "top_10k_eo": 47.0,
+        "top_10k_eo": 46.9,
         "predicted_price_delta": 0.0
     },
     "369": {
@@ -11909,36 +11969,6 @@
         "top_10k_eo": 11.1,
         "predicted_price_delta": 0.0
     },
-    "385": {
-        "name": "Trafford",
-        "ml_xmins": 0.0,
-        "ml_xmins_matrix": [
-            0.0,
-            1.0,
-            2.0,
-            3.0,
-            2.0,
-            2.0,
-            4.0,
-            3.0
-        ],
-        "ml_ev_1gw": 0.0,
-        "ml_ev_matrix": [
-            0.0,
-            0.06,
-            0.07,
-            0.1,
-            0.1,
-            0.08,
-            0.16,
-            0.13
-        ],
-        "ml_ev_8gw": 0.7,
-        "mc_floor_ev": 0.0,
-        "mc_ceiling_ev": 0.0,
-        "top_10k_eo": 1.6,
-        "predicted_price_delta": 0.0
-    },
     "386": {
         "name": "Bettinelli",
         "ml_xmins": 0.0,
@@ -12296,7 +12326,7 @@
         "ml_ev_8gw": 32.41,
         "mc_floor_ev": 2.33,
         "mc_ceiling_ev": 7.57,
-        "top_10k_eo": 22.7,
+        "top_10k_eo": 22.8,
         "predicted_price_delta": 0.0
     },
     "398": {
