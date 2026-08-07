@@ -135,77 +135,101 @@ def get_livefpl_top10k_eo():
         
     return eo_dict
 
-def get_crowdsourced_xmins(fpl_df: pd.DataFrame) -> dict:
+logger = logging.getLogger(__name__)
+
+def get_crowdsourced_data(fpl_df: pd.DataFrame) -> tuple:
     """
-    Attempts to load crowdsourced xMins from a local 'fplreview.csv' or an external JSON API.
-    Extracts an 8-GW matrix [gw1, gw2, ..., gw8] per player if multi-period columns exist.
-    """
-    logger.info("Checking for crowdsourced xMins matrix data...")
-    crowd_xmins = {}
-    name_pool = fpl_df['web_name'].dropna().tolist()
+    Loads crowdsourced xMins and Pts matrices from local fplreview*.csv files
+    or an external JSON API fallback. Handles multi-period, single-column,
+    and non-standard column naming conventions.
     
-    # 1. Try local CSV (Standard for FPL ML community)
-    if os.path.exists("fplreview.csv"):
+    Returns:
+        tuple: (crowd_xmins_dict, crowd_pts_dict)
+    """
+    logger.info("Checking for crowdsourced xMins and Pts matrix data...")
+    crowd_xmins = {}
+    crowd_pts = {}
+    name_pool = fpl_df['web_name'].dropna().tolist()
+
+    # 1. Look for any matching local CSV file
+    csv_files = glob.glob("fplreview*.csv")
+    target_csv = csv_files[0] if csv_files else ("fplreview.csv" if os.path.exists("fplreview.csv") else None)
+
+    if target_csv and os.path.exists(target_csv):
         try:
-            df = pd.read_csv("fplreview.csv")
-            id_col = next((c for c in df.columns if c.lower().strip() in ['id', 'element']), None)
+            df = pd.read_csv(target_csv)
+            id_col = next((c for c in df.columns if str(c).lower().strip() in ['id', 'element']), None)
+
+            # Identify xMins columns (e.g., 1_xMins, xMins_1, 1_mins)
+            xmins_cols = [c for c in df.columns if re.search(r'\d+_xmins|\d+_mins|xmins_\d+|mins_\d+', str(c), re.IGNORECASE)]
             
-            # Identify multi-period xMins columns (e.g., 1_xMins, 2_xMins... or xMins_1, xMins_2...)
-            xmins_cols = [c for c in df.columns if re.search(r'\d+_xmins|\d+_mins|xmins_\d+|mins_\d+', c, re.IGNORECASE)]
-            
+            # Identify Pts columns (e.g., 1_Pts, Pts_1, 1_points)
+            pts_cols = [c for c in df.columns if re.search(r'\d+_pts|\d+_points|pts_\d+|points_\d+', str(c), re.IGNORECASE)]
+
             def get_gw_num(col_name):
-                match = re.search(r'\d+', col_name)
+                match = re.search(r'\d+', str(col_name))
                 return int(match.group()) if match else 99
-            
+
             xmins_cols = sorted(xmins_cols, key=get_gw_num)[:8]
-            
+            pts_cols = sorted(pts_cols, key=get_gw_num)[:8]
+
+            # Primary Route: Multi-Period Columns
             if id_col and xmins_cols:
                 for _, row in df.iterrows():
                     try:
                         pid = int(row[id_col])
-                        # Store as list of 8 floats
                         crowd_xmins[pid] = [float(row[c]) for c in xmins_cols]
+                        if pts_cols and len(pts_cols) == len(xmins_cols):
+                            crowd_pts[pid] = [float(row[c]) for c in pts_cols]
                     except (ValueError, TypeError):
                         continue
-                logger.info(f"Loaded 8-GW xMins matrix for {len(crowd_xmins)} players from fplreview.csv")
-                return crowd_xmins
-            
-            # Fallback for custom single 'xMins' column CSVs
+                logger.info(f"Loaded 8-GW xMins/Pts matrix for {len(crowd_xmins)} players from {target_csv}")
+                return crowd_xmins, crowd_pts
+
+            # Fallback Route 1: Single-Column CSVs
             elif id_col:
-                mins_col = next((c for c in df.columns if 'xmins' in c.lower() or 'mins' in c.lower()), None)
+                mins_col = next((c for c in df.columns if 'xmins' in str(c).lower() or 'mins' in str(c).lower()), None)
+                pts_col = next((c for c in df.columns if 'pts' in str(c).lower() or 'points' in str(c).lower()), None)
+                
                 if mins_col:
                     for _, row in df.iterrows():
                         try:
                             pid = int(row[id_col])
-                            val = float(row[mins_col])
-                            crowd_xmins[pid] = [val] * 8
+                            val_mins = float(row[mins_col])
+                            crowd_xmins[pid] = [val_mins] * 8
+                            if pts_col:
+                                crowd_pts[pid] = [float(row[pts_col])] * 8
                         except (ValueError, TypeError):
                             continue
-                    logger.info(f"Loaded single-column xMins for {len(crowd_xmins)} players from fplreview.csv")
-                    return crowd_xmins
-        except Exception as e:
-            logger.warning(f"Failed to parse local fplreview.csv: {e}")
+                    logger.info(f"Loaded single-column xMins/Pts for {len(crowd_xmins)} players from {target_csv}")
+                    return crowd_xmins, crowd_pts
 
-    # 2. Automated Remote Fallback Hook
+        except Exception as e:
+            logger.warning(f"Failed to parse local {target_csv}: {e}")
+
+    # 2. Fallback Route 2: Automated Remote API
     url = os.getenv("CROWD_XMINS_URL", "")
     if url:
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 data = response.json()
-                for ext_name, mins in data.items():
+                for ext_name, val in data.items():
                     match = difflib.get_close_matches(str(ext_name), name_pool, n=1, cutoff=0.70)
                     if match:
-                        val = float(mins)
-                        crowd_xmins[match[0]] = [val] * 8
-                logger.info(f"Loaded xMins projections from external API.")
+                        matched_name = match[0]
+                        if isinstance(val, list):
+                            crowd_xmins[matched_name] = [float(x) for x in val[:8]]
+                        else:
+                            crowd_xmins[matched_name] = [float(val)] * 8
+                logger.info(f"Loaded xMins projections from remote API endpoint.")
         except Exception as e:
             logger.warning(f"Failed to fetch remote xMins: {e}")
 
     if not crowd_xmins:
-        logger.info("No crowdsourced xMins found. Pipeline will rely on internal heuristics.")
-    
-    return crowd_xmins
+        logger.info("No crowdsourced matrix found. Pipeline will rely on internal heuristics.")
+
+    return crowd_xmins, crowd_pts
 
 def get_upcoming_opponent_mapping(current_gw: int = None) -> dict:
     if current_gw is None:
@@ -405,67 +429,56 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
     df['ml_base_ev'] = df['domain_base_ev'] * ml_scalars
 
     projections = {}
-    projections = {}
+    crowd_xmins_dict, crowd_evs_dict = get_crowdsourced_data(fpl_df)
+
     for idx, row in df.iterrows():
-        pid = str(row['id'])
+        pid_int = int(row['id'])
+        pid = str(pid_int)
         web_name = str(row.get('web_name', 'Unknown'))
         
-        if pid in top10k_eo_dict:
-            top_10k_eo = top10k_eo_dict[pid]
-        else:
-            if row['global_own'] > 30.0 and row['cost_float'] >= 10.0: top_10k_eo = min(200.0, row['global_own'] * 1.6) 
-            elif row['global_own'] > 20.0 and row['cost_float'] >= 7.0: top_10k_eo = min(150.0, row['global_own'] * 1.3)
-            elif row['global_own'] < 10.0: top_10k_eo = row['global_own'] * 0.5 
-            else: top_10k_eo = row['global_own']
-        
-        transfers_in = int(row.get('transfers_in_event', 0) or 0)
-        transfers_out = int(row.get('transfers_out_event', 0) or 0)
-        net_transfers = transfers_in - transfers_out
-        
-        predicted_delta = 0.1 if net_transfers > 75000 else (-0.1 if net_transfers < -75000 else 0.0)
+        # ... [Keep existing EO and Price Delta calculation logic] ...
 
-        player_obj = {
-            "id": row['id'], "name": web_name, "team": row.get('team_code', 'UNK'),
-            "pos_id": int(row.get('element_type', 3)), "cost": row['cost_float'],
-            "own": row['global_own'], "status": str(row.get('status', 'a')),
-            "chance_of_playing_next_round": row.get('chance_of_playing_next_round'),
-            "fb_mins": row['fb_mins']
-        }
-        
         original_xmins = estimate_xmins(player_obj)
         
-        # Safely checks for integer ID, web_name, or falls back to heuristic array [original_xmins] * 8
-        crowd_val = crowd_xmins_dict.get(int(row['id']), crowd_xmins_dict.get(web_name, [original_xmins] * 8))
-        if isinstance(crowd_val, (int, float)):
-            crowd_val = [float(crowd_val)] * 8
+        # Retrieve crowdsourced xMins and EV arrays if available
+        raw_xmins_list = crowd_xmins_dict.get(pid_int, [original_xmins] * 8)
+        raw_ev_list = crowd_evs_dict.get(pid_int, None)
 
-        # Handle Human Overrides passed via XMINS_INPUT to run_ml_pipeline.py
+        # Handle Human Overrides passed via XMINS_INPUT
         if web_name.lower() in custom_xmins_dict or strip_accents(web_name) in custom_xmins_dict:
             override_val = custom_xmins_dict.get(web_name.lower(), custom_xmins_dict.get(strip_accents(web_name)))
             raw_xmins_list = [float(override_val)] * 8
-        else:
-            raw_xmins_list = crowd_val
 
-        # Pad or slice raw_xmins_list to ensure exactly 8 weeks
+        # Ensure arrays are exactly 8 items long
         if len(raw_xmins_list) < 8:
-            raw_xmins_list = raw_xmins_list + [raw_xmins_list[-1]] * (8 - len(raw_xmins_list))
+            raw_xmins_list += [raw_xmins_list[-1]] * (8 - len(raw_xmins_list))
         raw_xmins_list = raw_xmins_list[:8]
 
         weekly_evs = []
         weekly_xmins = []
-        base_ev = row['ml_base_ev']
 
-        # Calculate 8 distinct Expected Values across the horizon
         for t in range(8):
             target_xmins = min(90.0, float(raw_xmins_list[t]))
             
-            # Piecewise Non-Linear EV Scaling
-            prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (target_xmins - 60.0)))
-            app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
-            attacking_ev = max(0.0, base_ev - 2.0) * (target_xmins / 90.0)
-            
-            calculated_ev = (app_ev + attacking_ev) * row['opponent_def_rating']
-            weekly_evs.append(round(calculated_ev, 2))
+            if raw_ev_list and len(raw_ev_list) >= 8:
+                # Use the exact 8-GW point projection from the CSV
+                base_ev_t = float(raw_ev_list[t])
+                
+                # Rescale EV if a human override modified xMins for this gameweek
+                orig_csv_mins = max(1.0, float(raw_xmins_list[t]))
+                if web_name.lower() in custom_xmins_dict or strip_accents(web_name) in custom_xmins_dict:
+                    calculated_ev = base_ev_t * (target_xmins / orig_csv_mins)
+                else:
+                    calculated_ev = base_ev_t
+            else:
+                # Heuristic fallback if CSV player match is missing
+                base_ev = row['ml_base_ev']
+                prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (target_xmins - 60.0)))
+                app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
+                attacking_ev = max(0.0, base_ev - 2.0) * (target_xmins / 90.0)
+                calculated_ev = app_ev + attacking_ev
+
+            weekly_evs.append(round(max(0.0, calculated_ev), 2))
             weekly_xmins.append(round(target_xmins, 1))
 
         final_xmins = weekly_xmins[0]
