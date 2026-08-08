@@ -168,11 +168,11 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
     prob += pulp.lpSum(objective_terms)
 
-    # Use native system CBC binary
+    # Use native system CBC binary via COIN_CMD
     cbc_path = "/usr/bin/cbc"
     try:
         if os.path.exists(cbc_path):
-            solver_cmd = pulp.PULP_CBC_CMD(path=cbc_path, msg=False, timeLimit=120)
+            solver_cmd = pulp.COIN_CMD(path=cbc_path, msg=False, timeLimit=120)
         else:
             solver_cmd = pulp.PULP_CBC_CMD(msg=False, timeLimit=120)
         prob.solve(solver_cmd)
