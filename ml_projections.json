@@ -326,7 +326,7 @@
         "ml_ev_8gw": 24.37,
         "mc_floor_ev": 3.17,
         "mc_ceiling_ev": 6.74,
-        "top_10k_eo": 16.0,
+        "top_10k_eo": 15.9,
         "predicted_price_delta": 0.0
     },
     "12": {
@@ -836,7 +836,7 @@
         "ml_ev_8gw": 26.87,
         "mc_floor_ev": 2.27,
         "mc_ceiling_ev": 4.46,
-        "top_10k_eo": 4.7,
+        "top_10k_eo": 4.8,
         "predicted_price_delta": 0.0
     },
     "29": {
@@ -3656,7 +3656,7 @@
         "ml_ev_8gw": 30.19,
         "mc_floor_ev": 2.29,
         "mc_ceiling_ev": 6.77,
-        "top_10k_eo": 9.1,
+        "top_10k_eo": 9.2,
         "predicted_price_delta": 0.0
     },
     "125": {
@@ -4166,7 +4166,7 @@
         "ml_ev_8gw": 29.99,
         "mc_floor_ev": 1.96,
         "mc_ceiling_ev": 6.48,
-        "top_10k_eo": 29.3,
+        "top_10k_eo": 29.2,
         "predicted_price_delta": 0.0
     },
     "101": {
@@ -4616,7 +4616,7 @@
         "ml_ev_8gw": 15.22,
         "mc_floor_ev": 0.69,
         "mc_ceiling_ev": 3.03,
-        "top_10k_eo": 1.5,
+        "top_10k_eo": 1.6,
         "predicted_price_delta": 0.0
     },
     "153": {
@@ -4826,7 +4826,7 @@
         "ml_ev_8gw": 23.73,
         "mc_floor_ev": 1.74,
         "mc_ceiling_ev": 4.94,
-        "top_10k_eo": 3.7,
+        "top_10k_eo": 3.8,
         "predicted_price_delta": 0.0
     },
     "161": {
@@ -4946,7 +4946,7 @@
         "ml_ev_8gw": 32.49,
         "mc_floor_ev": 2.47,
         "mc_ceiling_ev": 6.72,
-        "top_10k_eo": 53.9,
+        "top_10k_eo": 54.1,
         "predicted_price_delta": 0.0
     },
     "166": {
@@ -5126,7 +5126,7 @@
         "ml_ev_8gw": 28.36,
         "mc_floor_ev": 2.79,
         "mc_ceiling_ev": 5.49,
-        "top_10k_eo": 11.9,
+        "top_10k_eo": 11.8,
         "predicted_price_delta": 0.0
     },
     "560": {
@@ -6416,7 +6416,7 @@
         "ml_ev_8gw": 18.67,
         "mc_floor_ev": 0.26,
         "mc_ceiling_ev": 4.54,
-        "top_10k_eo": 0.2,
+        "top_10k_eo": 0.1,
         "predicted_price_delta": 0.0
     },
     "210": {
@@ -7076,7 +7076,7 @@
         "ml_ev_8gw": 30.71,
         "mc_floor_ev": 3.26,
         "mc_ceiling_ev": 6.39,
-        "top_10k_eo": 10.0,
+        "top_10k_eo": 9.9,
         "predicted_price_delta": 0.0
     },
     "230": {
@@ -10766,7 +10766,7 @@
         "ml_ev_8gw": 28.03,
         "mc_floor_ev": 2.23,
         "mc_ceiling_ev": 5.9,
-        "top_10k_eo": 23.5,
+        "top_10k_eo": 23.6,
         "predicted_price_delta": 0.0
     },
     "347": {
@@ -10856,7 +10856,7 @@
         "ml_ev_8gw": 0.0,
         "mc_floor_ev": 0.0,
         "mc_ceiling_ev": 0.0,
-        "top_10k_eo": 0.3,
+        "top_10k_eo": 0.2,
         "predicted_price_delta": 0.0
     },
     "385": {
@@ -11966,7 +11966,7 @@
         "ml_ev_8gw": 28.63,
         "mc_floor_ev": 2.58,
         "mc_ceiling_ev": 5.06,
-        "top_10k_eo": 11.1,
+        "top_10k_eo": 11.0,
         "predicted_price_delta": 0.0
     },
     "386": {
@@ -12326,7 +12326,7 @@
         "ml_ev_8gw": 32.41,
         "mc_floor_ev": 2.33,
         "mc_ceiling_ev": 7.57,
-        "top_10k_eo": 23.0,
+        "top_10k_eo": 23.1,
         "predicted_price_delta": 0.0
     },
     "398": {
@@ -13346,7 +13346,7 @@
         "ml_ev_8gw": 30.01,
         "mc_floor_ev": 1.69,
         "mc_ceiling_ev": 7.51,
-        "top_10k_eo": 18.9,
+        "top_10k_eo": 19.0,
         "predicted_price_delta": 0.0
     },
     "428": {
@@ -13706,7 +13706,7 @@
         "ml_ev_8gw": 27.62,
         "mc_floor_ev": 1.38,
         "mc_ceiling_ev": 6.04,
-        "top_10k_eo": 2.7,
+        "top_10k_eo": 2.6,
         "predicted_price_delta": 0.0
     },
     "440": {
@@ -15176,7 +15176,7 @@
         "ml_ev_8gw": 24.28,
         "mc_floor_ev": 1.78,
         "mc_ceiling_ev": 5.43,
-        "top_10k_eo": 0.5,
+        "top_10k_eo": 0.6,
         "predicted_price_delta": 0.0
     },
     "489": {
@@ -15266,7 +15266,7 @@
         "ml_ev_8gw": 22.15,
         "mc_floor_ev": 1.49,
         "mc_ceiling_ev": 5.52,
-        "top_10k_eo": 5.2,
+        "top_10k_eo": 5.1,
         "predicted_price_delta": 0.0
     },
     "492": {
