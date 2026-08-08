@@ -52,8 +52,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         except Exception as e:
             logger.warning(f"Failed to load {scenarios_path}: {e}")
 
-    scenarios = stochastic_scenarios.get("scenarios", {}) if stochastic_scenarios else {}
-    scenario_weights = stochastic_scenarios.get("scenario_weights", [1.0]) if stochastic_scenarios else [1.0]
+    # Set the scenario limit parameter here (e.g., 40, 30, 20)
+    MAX_SCENARIOS_TO_SOLVE = 30  
+
+    raw_scenarios = stochastic_scenarios.get("scenarios", {}) if stochastic_scenarios else {}
+    
+    if raw_scenarios:
+        # Isolate top N scenarios and re-normalize weights to equal 1.0
+        sorted_scenarios = sorted(raw_scenarios.items(), key=lambda item: item[1]["weight"], reverse=True)[:MAX_SCENARIOS_TO_SOLVE]
+        total_weight = sum(item[1]["weight"] for item in sorted_scenarios)
+        scenarios = {str(i): {"weight": item[1]["weight"]/total_weight, "player_ev_matrix": item[1]["player_ev_matrix"]} for i, item in enumerate(sorted_scenarios)}
+    else:
+        scenarios = {}
+        
     num_scenarios = len(scenarios) if scenarios else 1
 
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
@@ -157,8 +168,8 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         objective_terms.append(base_ev * c[pid])
 
     for k in range(num_scenarios):
-        scen_weight = scenario_weights[k] if k < len(scenario_weights) else (1.0 / num_scenarios)
         scen_key = str(k)
+        scen_weight = scenarios[scen_key]["weight"] if scenarios and scen_key in scenarios else (1.0 / max(1, num_scenarios))
         scen_ev_matrix = scenarios.get(scen_key, {}).get("player_ev_matrix", {})
 
         for t in range(1, horizons):
