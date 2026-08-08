@@ -245,8 +245,7 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         base_ev = ev_matrix[pid][0]
         objective_terms.append(base_ev * s[pid])
         objective_terms.append(base_ev * c[pid])
-        
-        # FIX: Bench players contribute a fractional EV based on auto-sub probability
+        # Fractional auto-sub probability applied to the bench
         objective_terms.append((base_ev * w_sub_1) * (x[pid] - s[pid]))
 
     # Stage 2 Objective Across Scenarios
@@ -254,24 +253,22 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         scen_key = str(k)
         scen_weight = scenarios[scen_key]["weight"] if scenarios and scen_key in scenarios else (1.0 / max(1, num_scenarios))
         scen_ev_matrix = scenarios.get(scen_key, {}).get("player_ev_matrix", {})
-        objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
-        objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
-                
-        # FIX: Apply auto-sub probability to the bench across future scenarios
-        objective_terms.append((ev_val * t_discount * w_sub_1) * (x_scen[pid, t, k] - s_scen[pid, t, k]))
-
 
         for t in range(1, horizons):
             t_discount = (discount_factor ** t) * scen_weight
             for pid in valid_pids:
                 pid_str = str(pid)
+                
+                # 1. Calculate ev_val FIRST
                 if pid_str in scen_ev_matrix and len(scen_ev_matrix[pid_str]) > t:
                     ev_val = float(scen_ev_matrix[pid_str][t])
                 else:
                     ev_val = float(ev_matrix[pid][t]) if t < len(ev_matrix[pid]) else 0.0
 
+                # 2. THEN append to objective terms
                 objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
                 objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
+                objective_terms.append((ev_val * t_discount * w_sub_1) * (x_scen[pid, t, k] - s_scen[pid, t, k]))
 
             objective_terms.append(-1.0 * t_discount * hit_cost_scen[t, k])
             objective_terms.append(0.01 * t_discount * (ft_avail_scen[t, k] - ft_used_scen[t, k]))
