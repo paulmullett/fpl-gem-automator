@@ -34,9 +34,14 @@ async def run_scraper():
             })
             
             print("Navigating to FPLStatistics...")
-            await page.goto("http://www.fplstatistics.co.uk/", timeout=60000)
             
-            # Wait for the DataTables DOM to render
+            # 1. Intercept and block heavy media/ads to drastically speed up page load
+            await page.route("**/*", lambda route: route.abort() if route.request.resource_type in ["image", "media", "font"] else route.continue_())
+            
+            # 2. Use HTTPS and change the wait state to 'domcontentloaded' so it ignores hung ad-trackers
+            await page.goto("https://www.fplstatistics.co.uk/", wait_until="domcontentloaded", timeout=60000)
+            
+            # 3. Wait for the JavaScript DataTables DOM to render
             await page.wait_for_selector("#myDataTable tbody tr", timeout=30000)
             
             # Expand table to show all entries (bypassing pagination)
