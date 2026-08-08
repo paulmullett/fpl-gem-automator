@@ -203,6 +203,33 @@ def get_live_price_deltas(players_dict: dict) -> dict:
             
     return deltas
 
+def get_bimodal_probabilities(xmins: float) -> tuple:
+    """
+    Translates a continuous expected minutes (xMins) float into a discrete 
+    probabilistic state (P_Start, P_Sub, P_Bench) to eliminate fractional cameo errors.
+    """
+    xmins = max(0.0, min(90.0, float(xmins)))
+    
+    if xmins >= 75.0:
+        # Nailed starters: High start prob, low sub prob
+        p_start = 0.85 + ((xmins - 75.0) / 15.0) * 0.13  # Scales 0.85 -> 0.98
+        p_sub = 0.99 - p_start
+        p_bench = 0.01
+    elif xmins >= 40.0:
+        # Heavy rotation risks: Split between starting and benching
+        p_start = 0.30 + ((xmins - 40.0) / 35.0) * 0.55  # Scales 0.30 -> 0.85
+        p_sub = 0.85 - p_start
+        p_bench = 1.0 - (p_start + p_sub)
+    elif xmins > 0.0:
+        # Cameo risks: Unlikely to start, likely to sub or bench
+        p_start = (xmins / 40.0) * 0.30 
+        p_sub = (xmins / 40.0) * 0.55   
+        p_bench = 1.0 - (p_start + p_sub)
+    else:
+        p_start, p_sub, p_bench = 0.0, 0.0, 1.0
+        
+    return round(p_start, 3), round(p_sub, 3), round(p_bench, 3)
+
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
                  weights: Optional[Dict[str, float]] = None,
                  market_data: Optional[Dict[str, Any]] = None) -> float:
@@ -238,9 +265,16 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     # Asymptotic soft-cap
     if xgi > 1.0: xgi = 1.0 + ((xgi - 1.0) * 0.4)
 
-    mins_factor = xmins / 90.0
+    # --- BIMODAL MINUTE DISTRIBUTION ---
+    p_start, p_sub, p_bench = get_bimodal_probabilities(xmins)
+    
+    # Effective minutes recalibrates attacking/defensive threat based on actual time on pitch
+    # Starters average ~85 mins, Subs average ~20 mins
+    effective_mins = (p_start * 85.0) + (p_sub * 20.0)
+    mins_factor = effective_mins / 90.0
 
     team_name = p.get("team", "")
+
     team_xg_base = market_data[team_name].get("xG", 1.5) if market_data and team_name in market_data else 1.5
     baseline_xgi = team_xg_base * 0.01 if pos_id == 1 else (team_xg_base * 0.06 if pos_id == 2 else (team_xg_base * 0.18 if pos_id == 3 else team_xg_base * 0.30))
 
@@ -249,16 +283,15 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
     adjusted_xgi = xgi * translation_mult
     shrunken_xgi = (adjusted_xgi * confidence) + (baseline_xgi * (1.0 - confidence))
 
-    # 1. Appearance Points
-    prob_60 = 1.0 / (1.0 + math.exp(-0.15 * (xmins - 60.0)))
-    app_points = (prob_60 * 2.0) + ((1.0 - prob_60) * 1.0)
+    # 1. Appearance Points (Bimodal)
+    app_points = (p_start * 2.0) + (p_sub * 1.0) + (p_bench * 0.0)
 
-    # 2. Clean Sheet Points
+    # 2. Clean Sheet Points (Requires > 60 mins, hence tied strictly to p_start)
     team_xga = xgc * mins_factor
     cs_prob = math.exp(-team_xga) if team_xga > 0 else 1.0
 
-    if pos_id in [1, 2]: cs_points = (cs_prob * 4.0) * prob_60
-    elif pos_id == 3: cs_points = (cs_prob * 1.0) * prob_60
+    if pos_id in [1, 2]: cs_points = (cs_prob * 4.0) * p_start
+    elif pos_id == 3: cs_points = (cs_prob * 1.0) * p_start
     else: cs_points = 0.0
 
     # 3. Defensive Extra Points & Hybrid CBIT/CBIRT Probabilities
@@ -277,18 +310,16 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
         fbref_cbirt = _safe_float(p.get("fbref_cbirt_90"), 0.0)
         
         if pos_id == 2: # Defenders
-            # Use FPL's native defensive contribution metric if available, otherwise fallback to prior
             fpl_defcon = _safe_float(p.get("fpl_native_defcon_90", 0.0))
             prior_cbit = fbref_cbit if fbref_cbit > 0 else (11.5 if cost >= 5.0 else 8.5)
-
-            # If FPL provides native DefCon, use it entirely. Otherwise use the hybrid anchor.
+            fpl_cbit = _safe_float(p.get("fpl_cbit_90", 0.0))
+            
             expected_actions = (fpl_defcon * mins_factor) if fpl_defcon > 0 else ((fpl_cbit * trust_factor) + (prior_cbit * (1.0 - trust_factor))) * mins_factor
-        
+            
             prob_threshold = poisson_prob_ge(9, expected_actions)
-            extra_defensive_points = (prob_threshold * 2.0) * prob_60
+            extra_defensive_points = (prob_threshold * 2.0) * p_start
             
         elif pos_id in [3, 4]: # Midfielders / Forwards
-            # Defensive mids hit ~13.5 CBIRT, attacking wingers hit ~6.0
             prior_cbirt = fbref_cbirt if fbref_cbirt > 0 else (13.5 if cost <= 5.5 else 7.0)
             fpl_cbirt = _safe_float(p.get("fpl_cbirt_90", 0.0))
             
@@ -296,7 +327,7 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
             expected_actions = hybrid_cbirt * mins_factor
             
             prob_threshold = poisson_prob_ge(11, expected_actions)
-            extra_defensive_points = (prob_threshold * 2.0) * prob_60
+            extra_defensive_points = (prob_threshold * 2.0) * p_start
 
     # 4. Attacking Points with Value Multiplier
     market_premium_factor = 1.0 + (max(0, cost - 5.5) * 0.04)
