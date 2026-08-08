@@ -165,8 +165,12 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     # =========================================================================
     logger.info("Executing Two-Stage Stochastic MILP via PuLP/CBC...")
     
+    cbc_path = "/usr/bin/cbc"
     try:
-        prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=120))
+        if os.path.exists(cbc_path):
+            prob.solve(pulp.PULP_CBC_CMD(path=cbc_path, msg=False, timeLimit=120))
+        else:
+            prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=120))
     except Exception as e:
         logger.error(f"Solver error: {e}")
 
