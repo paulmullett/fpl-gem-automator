@@ -12,4 +12,3 @@ ddgs
 discord.py
 python-dotenv
 highspy
-playwright>=1.40.0
