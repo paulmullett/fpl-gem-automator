@@ -245,12 +245,21 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         base_ev = ev_matrix[pid][0]
         objective_terms.append(base_ev * s[pid])
         objective_terms.append(base_ev * c[pid])
+        
+        # FIX: Bench players contribute a fractional EV based on auto-sub probability
+        objective_terms.append((base_ev * w_sub_1) * (x[pid] - s[pid]))
 
     # Stage 2 Objective Across Scenarios
     for k in range(num_scenarios):
         scen_key = str(k)
         scen_weight = scenarios[scen_key]["weight"] if scenarios and scen_key in scenarios else (1.0 / max(1, num_scenarios))
         scen_ev_matrix = scenarios.get(scen_key, {}).get("player_ev_matrix", {})
+        objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
+        objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
+                
+        # FIX: Apply auto-sub probability to the bench across future scenarios
+        objective_terms.append((ev_val * t_discount * w_sub_1) * (x_scen[pid, t, k] - s_scen[pid, t, k]))
+
 
         for t in range(1, horizons):
             t_discount = (discount_factor ** t) * scen_weight
