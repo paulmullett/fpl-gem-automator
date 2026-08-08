@@ -213,21 +213,29 @@ MANDATORY SIGN-OFF: FINAL LOCKED-IN SQUAD SUMMARY
 
 def load_state():
     default_state = {
-        "buyback_targets": {}, "last_updated_gw": 0, "xmins_overrides": {}, 
+        "buyback_targets": {}, 
+        "last_updated_gw": 0, 
+        "xmins_overrides": {}, 
         "price_watchlist": {},
         "calibration_weights": {"xgi_weight": 0.70, "fdr_impact_factor": 0.10, "bench_discount": 0.01},
-        "pending_evaluation": None, "performance_history": []
+        "pending_evaluation": None, 
+        "performance_history": []
     }
     if os.path.exists(STATE_FILE_PATH):
         try:
             with open(STATE_FILE_PATH, "r") as f:
                 saved_state = json.load(f)
-                for key, val in default_state.items():
-                    if key not in saved_state: saved_state[key] = val
-                return saved_state
+            if not isinstance(saved_state, dict):
+                logger.warning("fpl_state.json contains non-dict data (null/invalid). Resetting to default state.")
+                return default_state
+            for key, val in default_state.items():
+                if key not in saved_state: 
+                    saved_state[key] = val
+            return saved_state
         except Exception as e:
             print(f"WARNING: Error reading state file: {e}")
             return default_state
+    return default_state
 
 def save_state(state):
     try:
@@ -267,10 +275,12 @@ def get_available_chips(target_gw, headers):
 
 def recalibrate_model(state, headers, active_gw):
     pending = state.get("pending_evaluation")
-    if not pending: return state
+    if not pending: 
+        return state
 
     eval_gw = pending.get("gw")
-    if active_gw <= eval_gw: return state
+    if active_gw <= eval_gw: 
+        return state
 
     try:
         resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/event/{eval_gw}/picks/", headers=headers)
@@ -281,8 +291,10 @@ def recalibrate_model(state, headers, active_gw):
             residual_error = actual_points - projected_xP
 
             state["performance_history"].append({
-                "gw": eval_gw, "projected_xP": round(projected_xP, 2),
-                "actual_points": actual_points, "residual_error": round(residual_error, 2),
+                "gw": eval_gw, 
+                "projected_xP": round(projected_xP, 2),
+                "actual_points": actual_points, 
+                "residual_error": round(residual_error, 2),
                 "captain": pending.get("captain")
             })
 
