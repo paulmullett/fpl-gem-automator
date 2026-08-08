@@ -180,31 +180,23 @@ def get_gameweek_state(bootstrap_data: Dict[str, Any]):
     active_gw = current_gw_id or (target_gw if target_gw > 1 else 1)
     return active_gw, target_gw
 
-def get_live_price_deltas(players_dict: dict) -> dict:
+def get_live_price_deltas(players_dict: dict, oracle_targets: Optional[Dict[int, float]] = None) -> dict:
+    if oracle_targets is None:
+        oracle_targets = {}
+        
     deltas = {}
     for pid, p in players_dict.items():
-        transfers_in = _safe_float(p.get("transfers_in_event"), 0.0)
-        transfers_out = _safe_float(p.get("transfers_out_event"), 0.0)
-        net_transfers = transfers_in - transfers_out
+        pid_int = int(pid)
+        target = oracle_targets.get(pid_int, 0.0)
         
-        # Zero-State catch for Pre-Season / Flat Markets
-        if net_transfers == 0:
-            deltas[pid] = 0.0
-            continue
-        
-        own_percent = max(0.5, _safe_float(p.get("own"), 1.0))
-        
-        # Ownership-relative velocity metric
-        velocity = net_transfers / (own_percent * 2500.0)
-        
-        # Sigmoid probability scaling for price movement (-1.0 to +1.0)
-        if velocity > 0:
-            prob = 1.0 / (1.0 + math.exp(-1.5 * (velocity - 1.0)))
+        # Exact integer targeting: >= 100 is a rise, <= -100 is a fall
+        if target >= 100.0:
+            deltas[pid] = 1.0
+        elif target <= -100.0:
+            deltas[pid] = -1.0
         else:
-            prob = -1.0 / (1.0 + math.exp(1.5 * (velocity + 1.0)))
+            deltas[pid] = round(target / 100.0, 3)
             
-        deltas[pid] = round(max(-1.0, min(1.0, prob)), 3)
-        
     return deltas
 
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 

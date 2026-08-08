@@ -152,7 +152,11 @@ def fetch_data_and_compare():
 
     players = {raw_p["id"]: normalize_player(raw_p, teams, element_types) for raw_p in raw_elements}
 
-    price_deltas = get_live_price_deltas(players)
+    from ml_engine.data_ingestion import fetch_price_targets
+    
+    oracle_targets = fetch_price_targets()
+    price_deltas = get_live_price_deltas(players, oracle_targets)
+    
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
 
