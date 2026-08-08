@@ -168,7 +168,7 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     cbc_path = "/usr/bin/cbc"
     try:
         if os.path.exists(cbc_path):
-            prob.solve(pulp.PULP_CBC_CMD(path=cbc_path, msg=False, timeLimit=120))
+            prob.solve(pulp.COIN_CMD(path=cbc_path, msg=False, timeLimit=120))
         else:
             prob.solve(pulp.PULP_CBC_CMD(msg=False, timeLimit=120))
     except Exception as e:
