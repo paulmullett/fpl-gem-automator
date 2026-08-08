@@ -385,6 +385,7 @@ def get_fpl_data():
     price_deltas = get_live_price_deltas(players)
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
+    market_str = "Market data & live price deltas initialized natively."
 
     if XMINS_INPUT and XMINS_INPUT.strip():
         print(f"Processing Human Oracle Input: {XMINS_INPUT}")

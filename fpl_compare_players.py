@@ -155,6 +155,7 @@ def fetch_data_and_compare():
     price_deltas = get_live_price_deltas(players)
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
+    market_str = "Market data & live price deltas initialized natively."
 
     ml_proj_data = {}
     if os.path.exists("ml_projections.json"):
