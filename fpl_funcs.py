@@ -181,22 +181,44 @@ def get_gameweek_state(bootstrap_data: Dict[str, Any]):
     return active_gw, target_gw
 
 def get_live_price_deltas(players_dict: dict, oracle_targets: Optional[Dict[int, float]] = None) -> dict:
-    if oracle_targets is None:
-        oracle_targets = {}
-        
     deltas = {}
+
+    # 1. PRIMARY ROUTE: Dedicated Price Oracle Targets (FPLStatistics)
+    if oracle_targets:
+        for pid, p in players_dict.items():
+            pid_int = int(pid)
+            target = oracle_targets.get(pid_int, 0.0)
+
+            # Direct linear target scaling: target is already a calibrated % (100.0 = 100%)
+            if target >= 100.0:
+                deltas[pid] = 1.0
+            elif target <= -100.0:
+                deltas[pid] = -1.0
+            else:
+                deltas[pid] = round(max(-1.0, min(1.0, target / 100.0)), 3)
+        return deltas
+
+    # 2. EMERGENCY FALLBACK: Legacy Net-Transfer Velocity Sigmoid
+    # Used ONLY if scrape_prices.py fails or fpl_price_targets.json is missing
     for pid, p in players_dict.items():
-        pid_int = int(pid)
-        target = oracle_targets.get(pid_int, 0.0)
-        
-        # Exact integer targeting: >= 100 is a rise, <= -100 is a fall
-        if target >= 100.0:
-            deltas[pid] = 1.0
-        elif target <= -100.0:
-            deltas[pid] = -1.0
+        transfers_in = _safe_float(p.get("transfers_in_event"), 0.0)
+        transfers_out = _safe_float(p.get("transfers_out_event"), 0.0)
+        net_transfers = transfers_in - transfers_out
+
+        if net_transfers == 0:
+            deltas[pid] = 0.0
+            continue
+
+        own_percent = max(0.5, _safe_float(p.get("own"), 1.0))
+        velocity = net_transfers / (own_percent * 2500.0)
+
+        if velocity > 0:
+            prob = 1.0 / (1.0 + math.exp(-1.5 * (velocity - 1.0)))
         else:
-            deltas[pid] = round(target / 100.0, 3)
-            
+            prob = -1.0 / (1.0 + math.exp(1.5 * (velocity + 1.0)))
+
+        deltas[pid] = round(max(-1.0, min(1.0, prob)), 3)
+
     return deltas
 
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
