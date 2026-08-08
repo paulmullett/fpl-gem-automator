@@ -1,144 +1,61 @@
-# FPL Quantitative Decision Engine & Tactical Audit Pipeline (2026/27 Season)
+# Quantitative Stochastic FPL Optimization Engine
 
-An institutional-grade Fantasy Premier League (FPL) quantitative modeling suite. The pipeline fuses Mixed-Integer Linear Programming (MILP), an 8-Gameweek multi-period deep-tree horizon optimization engine, Monte Carlo stochastic risk modeling, live bookmaker odds intensity solvers, and Google Gemini AI orchestration to deliver automated, data-driven squad optimizations directly to Discord.
-
-## Acknowledgements & Academic Citations
-This project implements machine learning methodologies inspired by the OpenFPL forecasting framework and multi-period linear programming techniques.
-* **Citation:** Groos, D. (2025). *OpenFPL: An open-source forecasting method rivaling state-of-the-art Fantasy Premier League services*. arXiv preprint arXiv:2508.09992.
-* **License Note:** Certain structural machine learning techniques herein are adapted from the OpenFPL methodology, originally distributed under the MIT License by Daniel Groos.
+An institutional-grade, zero-LLM Fantasy Premier League (FPL) squad optimization system built on Two-Stage Stochastic Mixed-Integer Linear Programming (MILP), Model Predictive Control (MPC), and Sample Average Approximation (SAA) scenario clustering.
 
 ---
 
-## System Architecture
+## Core Engine Architecture
 
-```
-┌────────────────────────┐ ┌────────────────────────┐ ┌────────────────────────┐
-│ Local GitHub Runner   │ │ Live Bookmaker API     │ │ FPL Review Matrix      │
-│ (Scrapes FBref Data)   │ │ (fpl_odds_engine.py)   │ │ (fplreview.csv)        │
-└───────────┬────────────┘ └───────────┬────────────┘ └───────────┬────────────┘
-            │                          │                          │
-            ▼                          ▼                          ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ ML Data Pipeline (run_ml_pipeline.py / train_models.py)                        │
-│ - Position-Specific Tri-Model Regressor Ensemble                               │
-│ - Piecewise Non-Linear xMins Scaling & 8-GW EV Matrix                          │
-│ Outputs: ml_projections.json                                                   │
-└─────────────────────────────────────────┬──────────────────────────────────────┘
-                                          │
-                                          ▼
-┌────────────────────────────────────────────────────────────────────────────────┐
-│ Python MILP Optimization Engine (fpl_bot.py / fpl_mpo_engine.py)              │
-│ - HiGHS / CBC Branch-and-Bound Solver (8-GW Horizon Matrix)                    │
-│ - Dynamic Poisson Binomial Bench Probability Matrix                            │
-│ - Game-Theory Risk Postures (NEUTRAL / SHIELD / CHASE)                         │
-└─────────────────────────────────────────┬──────────────────────────────────────┘
-                                          │
-                                          ▼
-┌────────────────────────┐ ┌────────────────────────┐ ┌────────────────────────┐
-│ Google Gemini AI       │ │ fpl_state.json Ledger │ │ Discord Webhook        │
-│ (gemini-3.6-flash)     │ │ (Persistent State)     │ │ (Formatted Output)     │
-└────────────────────────┘ └────────────────────────┘ └────────────────────────┘
-```
+### 1. Two-Stage Stochastic MILP Solver (`fpl_mpo_engine.py`)
+* **Stage 1 (Here-and-Now Decisions):** Optimizes immediate choices for the upcoming deadline (starting XI, formation, captaincy, vice-captaincy, and instant transfers).
+* **Stage 2 (Receding Horizon):** Evaluates multi-period transfer trees across an 8-Gameweek horizon across 40 distinct stochastic scenarios. Future expected points (xP) apply an exponential discount factor (gamma = 0.85^t) to prioritize near-term yield while maintaining medium-term squad structure.
 
-The system operates across a synchronized execution track:
-1. **ML Data Pipeline (`run_ml_pipeline.py` -> `ml_engine/train_models.py`):** Ingests official FPL API statistics, scrapes global FBref data natively via `soccerdata`, and parses 8-Gameweek crowdsourced $xMins$ matrices from FPL Review. Computes underlying Defensive Contribution metrics (`CBIT`/`CBIRT`), trains a Tri-Model Regressor Ensemble, applies piecewise non-linear minute scaling, and outputs an 8-GW EV matrix in `ml_projections.json`.
-2. **MILP Co-Optimization & Discord Oracle (`fpl_bot.py` -> `fpl_mpo_engine.py`):** Solves an 8-Gameweek Multi-Period Linear Program using the high-performance `HiGHS` solver. Co-optimizes Starting XI EV, $2.0\times$ captaincy multipliers, goalkeeper handcuffs, and dynamic bench probabilities. Gemini 3.6 Flash formats the output under strict manager agnosticism before publishing to Discord.
+### 2. Banked Free Transfer State Tracking (2024/25+ Rules)
+* **Accumulation & Carrying Capacity:** Continuous state variables (ft_avail, ft_used) track up to 5 banked Free Transfers across future weeks.
+* **Controlled Transfer Hits:** Enforces a hard cap allowing a maximum of 1 extra transfer for a -4 point hit per future week beyond available banked transfers (unless a Wildcard is active). This prevents solver overfitting to noisy distant projections.
+* **Transfer Hoarding Incentive:** Incorporates a fractional intrinsic value weight (0.01 pts) for unspent Free Transfers to encourage rolling transfers for multi-FT "mini-wildcards."
+
+### 3. Auto-Sub Valuation & Squad Resilience
+* Integrates fractional auto-substitution weighting (w_sub) into the Stage 1 and Stage 2 objective functions.
+* Evaluates bench assets based on starting XI rotational risk, preventing the selection of non-playing £4.0m deadwood while maintaining squad depth.
 
 ---
 
-## Mathematical & Quantitative Foundation
+## Pipeline Execution Flow
 
-### 1. 8-Gameweek Piecewise Non-Linear Expected Value
-Player Expected Value ($EV$) is evaluated dynamically across an 8-Gameweek horizon ($t \in [0, 7]$). Appearance points lock in via a Sigmoid probability curve around the 60-minute threshold, while attacking and defensive returns scale linearly with time on pitch:
+    [Live Data Ingestion] ──> [Stochastic Scenario Oracle] ──> [Two-Stage MILP Solver] ──> [Discord Payload]
+     (FPL API / Odds)          (1,000 Futures ──> 40 SAA)      (PuLP / System CBC)        (Pure Python)
 
-$$P(\text{Min} \ge 60) = \frac{1}{1 + e^{-0.15(xMins_t - 60.0)}}$$
-
-$$EV_t = \left[ \left(P(\text{Min} \ge 60) \cdot 2.0 + (1 - P(\text{Min} \ge 60)) \cdot \frac{xMins_t}{60.0}\right) + \left(\max(0, \text{BaseEV} - 2.0) \cdot \frac{xMins_t}{90.0}\right) \right] \cdot \text{DefRating}_t$$
-
-### 2. Live Bookmaker Odds Calibration (`scipy.optimize.fsolve`)
-Using `The Odds API`, the engine fetches decimal odds for H2H and Over/Under 2.5 markets, removes bookmaker margin (`remove_vig`), and solves for team Poisson intensity parameters ($\lambda$) to derive true clean sheet and attacking probabilities:
-
-$$P(\text{Under } 2.5) = e^{-\lambda} \left(1 + \lambda + \frac{\lambda^2}{2}\right)$$
-
-### 3. Defensive Contribution (`DefCon`) BPS Mechanics
-Defenders and Midfielders earn additional expected points based on Poisson tail probabilities of hitting defensive action thresholds (>8.5 `CBIT` for defenders, >10.5 `CBIRT` for midfielders) under the updated BPS scoring rules:
-
-$$P(X \ge k) = 1 - \sum_{i=0}^{k-1} \frac{e^{-\lambda} \lambda^i}{i!}$$
-
-### 4. Tri-Model Residual Regressor Ensemble
-The ML pipeline computes performance adjustment scalars using an ensemble trained on underlying metrics ($xGI$, $xGC$, `CBIT`, Opponent Def Rating) with asymmetric weighting for true haulers ($\ge 8.0$ points):
-
-$$\text{Scalar} = 0.40 \cdot \hat{y}_{\text{XGB}} + 0.40 \cdot \hat{y}_{\text{LGB}} + 0.20 \cdot \hat{y}_{\text{RF}}$$
+1. **`data_ingestion.py` / `scrape_prices.py`:** Pulls live player status, pricing, selling values, bank balance, and fixture difficulty metrics.
+2. **`stochastic_oracle.py`:** Generates 1,000 Monte Carlo match simulations and clusters them into 40 weighted SAA scenario matrices.
+3. **`fpl_mpo_engine.py`:** Solves the multi-period optimization model using the COIN-OR Branch and Cut (CBC) solver.
+4. **`fpl_bot.py`:** Parses the optimal decision vectors and dispatches the deterministic report via Discord Webhook.
 
 ---
 
-## Multi-Period Optimization (MPO) & Strategy Rules
+## Configuration & Environment Variables
 
-The solver (`fpl_mpo_engine.py`) enforces the following quantitative constraints:
-
-* **Direct 8-GW EV Matrix Optimization:** Evaluates transfers across true forward-projected expected values, natively accounting for blanks, doubles, and phased rotation.
-* **Simultaneous Captaincy Optimization:** Co-optimizes the Starting XI EV and the $2.0\times$ captaincy multiplier simultaneously.
-* **Goalkeeper Handshake Constraint:** Calculates the explicit expected value bonus of owning a premium starting goalkeeper and their direct £4.0m backup ("handcuff").
-* **Goalkeeper Budget Guardrail:** Restricts total squad goalkeeper spend to $\le £9.5\text{m}$, enforcing capital efficiency and eliminating bench tax.
-* **Combinatorial Bench Probability Matrix:** Calculates substitute triggering probabilities ($w_{sub1}, w_{sub2}, w_{sub3}$) using a Poisson Binomial distribution DP matrix derived from starting XI expected minutes.
-* **Game-Theory Risk Postures:**
-  * `NEUTRAL`: Pure mathematical Expected Value optimization.
-  * `SHIELD`: Scales EV by top-10k Effective Ownership (EO) floor metrics to protect rank.
-  * `CHASE`: Scales EV by 90th percentile Monte Carlo ceilings to maximize upside.
-
----
-
-## Directory Map
-
-* **`.github/workflows/`**
-  * `fpl_orchestrator.yml`: Master scheduled & manual execution workflow (`clean: false` configured for persistent runner cache).
-  * `fpl_player_compare.yml`: Head-to-Head player audit workflow.
-* **`ml_engine/`**
-  * `data_ingestion.py`: FPL API, FBref, & Understat `soccerdata` ingestion.
-  * `train_models.py`: Dataset alignment, 8-GW matrix parsing, & Tri-Model Regressor pipeline.
-  * `entity_mapping.json`: Static string overrides for player matching.
-* **Core Modules**
-  * `fpl_bot.py`: Main orchestrator, Gemini AI client, & Discord publisher.
-  * `fpl_compare_players.py`: Head-to-Head player audit script.
-  * `fpl_funcs.py`: Bayesian pricing priors, $xMins$ heuristics, & BPS equations.
-  * `fpl_mpo_engine.py`: Mixed-Integer Linear Programming solver (`PuLP` + `HiGHS`).
-  * `fpl_odds_engine.py`: Live bookmaker odds ingestion & `fsolve` Poisson solver.
-  * `fpl_monte_carlo.py`: Stochastic 1,000-trial Beta/Poisson simulator.
-  * `run_ml_pipeline.py`: Pipeline entry point.
-* **State & Data Files**
-  * `fplreview.csv`: Raw 8-Gameweek crowdsourced projection export.
-  * `fpl_state.json`: Persistent strategy state, calibration weights, & historical residual errors.
-  * `ml_projections.json`: Generated 8-GW ML payload.
-  * `requirements.txt`: Python package dependencies.
-  * `.env`: Local environment variables.
-
----
-
-## Environment Secrets & Configuration
-
-Configure the following secrets in GitHub Repository Settings (**Settings -> Secrets and variables -> Actions**):
-
-| Secret Name | Required | Description |
+| Variable | Type | Description |
 | :--- | :--- | :--- |
-| `GEMINI_API_KEY` | Yes | Google Gemini API Key |
-| `DISCORD_WEBHOOK_URL` | Yes | Discord Channel Webhook URL |
-| `FPL_TEAM_ID` | Yes | Numeric FPL Team Entry ID |
-| `ODDS_API_KEY` | Optional | The Odds API key for live betting odds ingestion |
+| `FPL_TEAM_ID` | Integer | Official FPL Team ID for live API context ingestion. |
+| `DISCORD_WEBHOOK_URL` | String | Discord Webhook URL for automated report delivery. |
+| `RISK_POSTURE` | String | Strategy mode: `NEUTRAL` (Max xP), `SHIELD` (Min variance), or `CHASE` (Max upside). |
+| `XMINS_INPUT` | String | Manual expected minutes overrides (e.g., `"Saka: 45, Foden: 0"`). |
 
 ---
 
-## Execution Guide
+## Local Development & Setup
 
-### Scheduled Runs
-The bot runs automatically via GitHub Actions:
-* **Thursdays @ 18:00 UTC:** Pre-weekend deadline preparation.
-* **Sundays @ 20:00 UTC:** Post-weekend strategic review and model recalibration.
+1. **Clone Repository & Install Dependencies:**
+    git clone https://github.com/paulmullett/fpl-gem-automator.git
+    cd fpl-gem-automator
+    pip install -r requirements.txt
 
-### Manual Trigger (GitHub UI)
-1. Go to **Actions -> FPL Master Quantitative Bot**.
-2. Click **Run workflow**.
-3. Select parameters:
-  * **Analysis Type:** `auto`, `pre_gameweek_deadline`, or `post_gameweek_review`.
-  * **Active Chip:** `NONE`, `WILDCARD`, `FREE_HIT`, `BENCH_BOOST`, or `TRIPLE_CAPTAIN`.
-  * **Human Overrides:** `haaland: 60, saka: 0` (Supports colons, commas, or JSON).
-  * **Risk Posture:** `NEUTRAL`, `SHIELD`, or `CHASE`.
+2. **Configure Local Environment:**
+    Create a local `.env` file (ensure `.env` is listed in `.gitignore`):
+    FPL_TEAM_ID=123456
+    DISCORD_WEBHOOK_URL=https://discord.com/api/webhooks/...
+    RISK_POSTURE=NEUTRAL
+
+3. **Execute Pipeline:**
+    python fpl_bot.py
