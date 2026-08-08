@@ -178,7 +178,12 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
             # Wildcard suppresses transfer hit penalties to 0
             trans_sum_scen = pulp.lpSum(tin_scen[pid, t, k] for pid in valid_pids)
-            prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - 1) - (100.0 * y_wc[t])
+
+            # HARD CAP: Maximum of 1 extra transfer for a -4 hit per week unless Wildcard is active
+            prob += trans_sum_scen <= ft_avail_scen[t, k] + 1 + (15 * y_wc[t])
+
+            # CORRECT HIT PENALTY MATH: Subtracts actual free transfers used, not a static 1
+            prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - ft_used_scen[t, k]) - (100.0 * y_wc[t])
 
             for pid in valid_pids:
                 prob += s_scen[pid, t, k] <= x_scen[pid, t, k]

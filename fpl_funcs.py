@@ -413,7 +413,7 @@ def evaluate_chip_thresholds(starters: list, bench: list, ev_matrix: dict, activ
     recommendations = []
 
     bench_ev = sum(ev_matrix[p["id"]][0] for p in bench)
-    if bench_ev >= 12.0: recommendations.append(f"BENCH BOOST THRESHOLD MET: Bench reserves project an elite {bench_ev:.1f} combined xP.")
+    if bench_ev >= 15.5: recommendations.append(f"BENCH BOOST THRESHOLD MET: Bench reserves project an elite {bench_ev:.1f} combined xP.")
 
     best_starter = max(starters, key=lambda p: ev_matrix[p["id"]][0])
     best_ev = ev_matrix[best_starter["id"]][0]
