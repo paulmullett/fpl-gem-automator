@@ -25,7 +25,7 @@ from sklearn.model_selection import GridSearchCV
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from fpl_funcs import estimate_xmins
+from fpl_funcs import estimate_xmins, get_bimodal_probabilities
 from ml_engine.data_ingestion import get_team_matchup_ratings, fetch_understat_rolling_data
 
 logger = logging.getLogger(__name__)
@@ -483,12 +483,20 @@ def generate_ml_projections(fpl_df: pd.DataFrame, fbref_df: pd.DataFrame) -> dic
                 else:
                     calculated_ev = base_ev_t
             else:
-                # Fallback Route: Internal heuristic calculation
+                # Fallback Route: Internal heuristic calculation (Bimodal EV)
                 base_ev = float(row.get('ml_base_ev', row.get('ep_next', 2.0)))
-                prob_60 = 1.0 / (1.0 + np.exp(-0.15 * (target_xmins - 60.0)))
-                app_ev = (prob_60 * 2.0) + ((1.0 - prob_60) * (target_xmins / 60.0))
-                attacking_ev = max(0.0, base_ev - 2.0) * (target_xmins / 90.0)
-                calculated_ev = app_ev + attacking_ev
+                p_start, p_sub, p_bench = get_bimodal_probabilities(target_xmins)
+                
+                app_ev = (p_start * 2.0) + (p_sub * 1.0)
+                
+                # Strip base 2 appearance points to isolate pure attacking/defensive EV
+                pure_action_ev = max(0.0, base_ev - 2.0) 
+                
+                # Multiply action EV by expected pitch time in each state
+                action_ev_start = pure_action_ev * (85.0 / 90.0)
+                action_ev_sub = pure_action_ev * (20.0 / 90.0)
+                
+                calculated_ev = app_ev + (p_start * action_ev_start) + (p_sub * action_ev_sub)
 
             weekly_evs.append(round(max(0.0, calculated_ev), 2))
             weekly_xmins.append(round(target_xmins, 1))
