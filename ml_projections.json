@@ -5426,7 +5426,7 @@
         "ml_ev_8gw": 17.36,
         "mc_floor_ev": 1.17,
         "mc_ceiling_ev": 2.45,
-        "top_10k_eo": 16.2,
+        "top_10k_eo": 16.1,
         "predicted_price_delta": 0.0
     },
     "176": {
@@ -13226,7 +13226,7 @@
         "ml_ev_8gw": 24.61,
         "mc_floor_ev": 2.91,
         "mc_ceiling_ev": 5.95,
-        "top_10k_eo": 24.7,
+        "top_10k_eo": 24.8,
         "predicted_price_delta": 0.0
     },
     "424": {
@@ -15596,7 +15596,7 @@
         "ml_ev_8gw": 29.27,
         "mc_floor_ev": 2.61,
         "mc_ceiling_ev": 5.13,
-        "top_10k_eo": 23.7,
+        "top_10k_eo": 23.6,
         "predicted_price_delta": 0.0
     },
     "500": {
