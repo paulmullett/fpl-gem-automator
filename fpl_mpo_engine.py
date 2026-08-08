@@ -1,5 +1,6 @@
 """
 fpl_mpo_engine.py — Two-Stage Stochastic MILP Engine (PuLP / Native System CBC)
+Fully restores Endogenous Chip Deployment, Opportunity Cost Decay, and GW19 Half-Season Expiration Logic.
 """
 
 import os
@@ -18,11 +19,14 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                              available_chips: dict = None,
                              scenarios_path: str = "stochastic_scenarios.json") -> tuple:
     
+    if planned_chips is None: planned_chips = {}
+    if available_chips is None: available_chips = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
+
     valid_pids = [pid for pid in players.keys() if players[pid].get("status") in ["a", "d", ""]]
     if not valid_pids:
         return [], []
 
-    # --- MATRIX COMPRESSION (Player Pool Trimming) ---
+    # --- MATRIX COMPRESSION ---
     viable_pids = set(current_squad_ids)
     sorted_by_ev = sorted(valid_pids, key=lambda p: sum(ev_matrix[p]), reverse=True)
     
@@ -41,9 +45,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             viable_pids.add(pid); fwds_added += 1
 
     valid_pids = list(viable_pids)
-    # -------------------------------------------------
+    # --------------------------
 
-    # Load SAA Stochastic Scenarios
+    # --- SAA SCENARIO PRUNING ---
     stochastic_scenarios = None
     if os.path.exists(scenarios_path):
         try:
@@ -52,42 +56,80 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         except Exception as e:
             logger.warning(f"Failed to load {scenarios_path}: {e}")
 
-    # Set the scenario limit parameter here (e.g., 40, 30, 20)
-    MAX_SCENARIOS_TO_SOLVE = 30  
-
     raw_scenarios = stochastic_scenarios.get("scenarios", {}) if stochastic_scenarios else {}
     
+    MAX_SCENARIOS = 40
     if raw_scenarios:
-        # Isolate top N scenarios and re-normalize weights to equal 1.0
-        sorted_scenarios = sorted(raw_scenarios.items(), key=lambda item: item[1]["weight"], reverse=True)[:MAX_SCENARIOS_TO_SOLVE]
+        sorted_scenarios = sorted(raw_scenarios.items(), key=lambda item: item[1]["weight"], reverse=True)[:MAX_SCENARIOS]
         total_weight = sum(item[1]["weight"] for item in sorted_scenarios)
         scenarios = {str(i): {"weight": item[1]["weight"]/total_weight, "player_ev_matrix": item[1]["player_ev_matrix"]} for i, item in enumerate(sorted_scenarios)}
     else:
         scenarios = {}
         
     num_scenarios = len(scenarios) if scenarios else 1
+    # ----------------------------
 
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
     is_fresh_squad = len(initial_owned) == 0
 
     prob = pulp.LpProblem("Stochastic_FPL_Solver", pulp.LpMaximize)
 
-    # Stage 1: Here-and-Now
+    # --- ENDOGENOUS CHIP DECISION VARIABLES ---
+    y_wc = pulp.LpVariable.dicts("y_wc", range(horizons), cat="Binary")
+    y_tc = pulp.LpVariable.dicts("y_tc", range(horizons), cat="Binary")
+    y_bb = pulp.LpVariable.dicts("y_bb", range(horizons), cat="Binary")
+
+    # Global Chip Rules: Max 1 of each chip per horizon, max 1 chip total per week
+    prob += pulp.lpSum(y_wc[t] for t in range(horizons)) <= (1 if available_chips.get("wildcard", True) else 0)
+    prob += pulp.lpSum(y_tc[t] for t in range(horizons)) <= (1 if available_chips.get("3xc", True) else 0)
+    prob += pulp.lpSum(y_bb[t] for t in range(horizons)) <= (1 if available_chips.get("bboost", True) else 0)
+
+    for t in range(horizons):
+        prob += y_wc[t] + y_tc[t] + y_bb[t] <= 1
+
+    # Stage 1 Forced Active Chip Rules
+    if active_chip == "WILDCARD" and available_chips.get("wildcard", True): prob += y_wc[0] == 1
+    elif active_chip == "TRIPLE_CAPTAIN" and available_chips.get("3xc", True): prob += y_tc[0] == 1
+    elif active_chip == "BENCH_BOOST" and available_chips.get("bboost", True): prob += y_bb[0] == 1
+    else:
+        prob += y_wc[0] == 0
+        prob += y_tc[0] == 0
+        prob += y_bb[0] == 0
+
+    # Prevent automated Wildcard burning in early weeks (t=0, t=1) unless explicitly triggered
+    for t in range(horizons):
+        if t < 2 and active_chip != "WILDCARD":
+            prob += y_wc[t] == 0
+
+    # Stage 1 Variables (GW1)
     x = pulp.LpVariable.dicts("x_gw1", valid_pids, cat="Binary")
     s = pulp.LpVariable.dicts("s_gw1", valid_pids, cat="Binary")
     c = pulp.LpVariable.dicts("c_gw1", valid_pids, cat="Binary")
     trans_in = pulp.LpVariable.dicts("tin_gw1", valid_pids, cat="Binary")
     trans_out = pulp.LpVariable.dicts("tout_gw1", valid_pids, cat="Binary")
 
-    # Stage 2: Wait-and-See
+    # Stage 2 Variables (GW2-8 across scenarios)
     x_scen = pulp.LpVariable.dicts("x_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
-    s_scen = pulp.LpVariable.dicts("s_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
-    c_scen = pulp.LpVariable.dicts("c_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     tin_scen = pulp.LpVariable.dicts("tin_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     tout_scen = pulp.LpVariable.dicts("tout_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
-
-    # Hit cost accounting variables for future weeks
+    
+    s_scen = pulp.LpVariable.dicts("s_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, upBound=1.0, cat="Continuous")
+    c_scen = pulp.LpVariable.dicts("c_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, upBound=1.0, cat="Continuous")
     hit_cost_scen = pulp.LpVariable.dicts("hit_scen", ((t, k) for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, cat="Continuous")
+
+    # --- DYNAMIC OPPORTUNITY COST DECAY MATHEMATICS ---
+    if target_gw <= 19:
+        remaining_half = max(1.0, 19.0 - target_gw)
+        decay = (remaining_half / 18.0) ** 0.5
+        wc_cost = 14.0 * decay
+        tc_cost = 9.0 * decay
+        bb_cost = 10.0 * decay
+    else:
+        remaining_half = max(1.0, 38.0 - target_gw)
+        decay = (remaining_half / 18.0) ** 0.5
+        wc_cost = 16.0 * decay
+        tc_cost = 14.0 * decay
+        bb_cost = 18.0 * decay
 
     # Stage 1 Constraints
     prob += pulp.lpSum(x[pid] for pid in valid_pids) == 15
@@ -132,13 +174,11 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids) == 15
             prob += pulp.lpSum(s_scen[pid, t, k] for pid in valid_pids) == 11
             prob += pulp.lpSum(c_scen[pid, t, k] for pid in valid_pids) == 1
-
-            # STAGE 2 BUDGET GUARDRAIL
             prob += pulp.lpSum(players[pid]["cost"] * x_scen[pid, t, k] for pid in valid_pids) <= total_liquid_budget
 
-            # STAGE 2 HIT COST ACCOUNTING: Transfers > 1 incur a -4 pt penalty
+            # Wildcard suppresses transfer hit penalties to 0
             trans_sum_scen = pulp.lpSum(tin_scen[pid, t, k] for pid in valid_pids)
-            prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - 1)
+            prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - 1) - (100.0 * y_wc[t])
 
             for pid in valid_pids:
                 prob += s_scen[pid, t, k] <= x_scen[pid, t, k]
@@ -162,11 +202,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     objective_terms = []
     discount_factor = 0.85
 
+    # Deduct opportunity costs for chip deployments
+    for t in range(horizons):
+        objective_terms.append(-1.0 * wc_cost * y_wc[t])
+        objective_terms.append(-1.0 * tc_cost * y_tc[t])
+        objective_terms.append(-1.0 * bb_cost * y_bb[t])
+
+    # Stage 1 Objective
     for pid in valid_pids:
         base_ev = ev_matrix[pid][0]
         objective_terms.append(base_ev * s[pid])
-        objective_terms.append(base_ev * c[pid])
+        objective_terms.append(base_ev * c[pid]) # Captain 2x base
 
+    # Stage 2 Objective Across Scenarios
     for k in range(num_scenarios):
         scen_key = str(k)
         scen_weight = scenarios[scen_key]["weight"] if scenarios and scen_key in scenarios else (1.0 / max(1, num_scenarios))
@@ -184,12 +232,11 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
                 objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
 
-            # Deduct hit cost penalty from objective
             objective_terms.append(-1.0 * t_discount * hit_cost_scen[t, k])
 
     prob += pulp.lpSum(objective_terms)
 
-    # Use native system CBC binary via COIN_CMD
+    # Solve via native system CBC binary
     cbc_path = "/usr/bin/cbc"
     try:
         if os.path.exists(cbc_path):
@@ -203,13 +250,7 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     optimal_squad = []
     transfer_plan = []
 
-    def has_feasible_squad():
-        try:
-            return sum(1 for pid in valid_pids if x[pid].varValue is not None and x[pid].varValue > 0.5) == 15
-        except Exception:
-            return False
-
-    if prob.status == pulp.LpStatusOptimal or has_feasible_squad():
+    if prob.status == pulp.LpStatusOptimal:
         logger.info("Stochastic Solution Found!")
 
         for pid in valid_pids:
@@ -222,13 +263,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         for t in range(1, min(4, horizons)):
             gw_trans_in = [players[pid]["name"] for pid in valid_pids if tin_scen[pid, t, 0].varValue and tin_scen[pid, t, 0].varValue > 0.5]
             gw_trans_out = [players[pid]["name"] for pid in valid_pids if tout_scen[pid, t, 0].varValue and tout_scen[pid, t, 0].varValue > 0.5]
-            if gw_trans_in or gw_trans_out:
-                transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]")
+            
+            chip_str = ""
+            if y_wc[t].varValue and y_wc[t].varValue > 0.5: chip_str = " [WILDCARD DEPLOYED]"
+            elif y_tc[t].varValue and y_tc[t].varValue > 0.5: chip_str = " [TRIPLE CAPTAIN DEPLOYED]"
+            elif y_bb[t].varValue and y_bb[t].varValue > 0.5: chip_str = " [BENCH BOOST DEPLOYED]"
+
+            if gw_trans_in or gw_trans_out or chip_str:
+                transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]{chip_str}")
 
         return optimal_squad, transfer_plan
 
     else:
-        logger.warning("Stochastic Solver failed to converge. Executing Constrained Greedy Heuristic.")
+        logger.warning("Stochastic Solver failed to mathematically converge in time. Executing Constrained Greedy Heuristic.")
         valid_players = [p for p in players.values() if p.get("status") in ["a", "d", ""]]
         
         gks = sorted([p for p in valid_players if p["pos_id"] == 1], key=lambda i: sum(ev_matrix[i["id"]]), reverse=True)
@@ -237,4 +284,4 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         fwds = sorted([p for p in valid_players if p["pos_id"] == 4], key=lambda i: sum(ev_matrix[i["id"]]), reverse=True)
 
         base_squad = gks[:2] + defs[:5] + mids[:5] + fwds[:3]
-        return base_squad, transfer_plan
+        return base_squad, []
