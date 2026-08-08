@@ -2,8 +2,8 @@ name: FPL Master Quantitative Bot
 
 on:
   schedule:
-    - cron: '0 18 * * 4' # Thursday evenings (Pre-weekend prep)
-    - cron: '0 20 * * 0' # Sunday evenings (Post-weekend review)
+    - cron: '0 18 * * 4' # Thursday evenings
+    - cron: '0 20 * * 0' # Sunday evenings
   workflow_dispatch:
     inputs:
       run_type:
@@ -55,18 +55,19 @@ jobs:
         with:
           clean: false
 
-      - name: Install Dependencies
+      - name: Install Dependencies & Clear Python Cache
         run: |
           python3 -m venv venv
           venv/bin/python -m pip install --upgrade pip
           venv/bin/python -m pip install -r requirements.txt
+          find . -type d -name "__pycache__" -exec rm -r {} +
 
-      - name: Run ML Data Pipeline
+      - name: Run ML & Stochastic Pipeline
         env:
           XMINS_INPUT: ${{ github.event.inputs.xmins_input || '' }}
         run: venv/bin/python run_ml_pipeline.py
 
-      - name: Execute MILP Solver & Discord Oracle
+      - name: Execute Stochastic MILP Solver & Discord Oracle
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
@@ -83,6 +84,6 @@ jobs:
         run: |
           git config --global user.name "GitHub Actions Bot"
           git config --global user.email "actions@github.com"
-          git add -f fpl_state.json ml_projections.json
-          git commit -m "Auto-update state and ML projections [skip ci]" || echo "No changes to commit"
+          git add -f fpl_state.json ml_projections.json stochastic_scenarios.json
+          git commit -m "Auto-update state, ML projections & stochastic scenarios [skip ci]" || echo "No changes to commit"
           git push
