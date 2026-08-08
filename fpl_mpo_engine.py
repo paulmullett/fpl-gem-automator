@@ -6,7 +6,6 @@ import os
 import json
 import logging
 import pulp
-from fpl_funcs import estimate_xmins
 
 logger = logging.getLogger(__name__)
 
@@ -24,8 +23,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         return [], []
 
     # --- MATRIX COMPRESSION (Player Pool Trimming) ---
-    # Trims unviable assets to keep the stochastic matrix under 150k variables,
-    # allowing native CBC to solve the two-stage model cleanly on local hardware.
     viable_pids = set(current_squad_ids)
     sorted_by_ev = sorted(valid_pids, key=lambda p: sum(ev_matrix[p]), reverse=True)
     
@@ -78,6 +75,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     tin_scen = pulp.LpVariable.dicts("tin_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     tout_scen = pulp.LpVariable.dicts("tout_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
 
+    # Hit cost accounting variables for future weeks
+    hit_cost_scen = pulp.LpVariable.dicts("hit_scen", ((t, k) for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, cat="Continuous")
+
     # Stage 1 Constraints
     prob += pulp.lpSum(x[pid] for pid in valid_pids) == 15
     prob += pulp.lpSum(s[pid] for pid in valid_pids) == 11
@@ -122,6 +122,13 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             prob += pulp.lpSum(s_scen[pid, t, k] for pid in valid_pids) == 11
             prob += pulp.lpSum(c_scen[pid, t, k] for pid in valid_pids) == 1
 
+            # STAGE 2 BUDGET GUARDRAIL
+            prob += pulp.lpSum(players[pid]["cost"] * x_scen[pid, t, k] for pid in valid_pids) <= total_liquid_budget
+
+            # STAGE 2 HIT COST ACCOUNTING: Transfers > 1 incur a -4 pt penalty
+            trans_sum_scen = pulp.lpSum(tin_scen[pid, t, k] for pid in valid_pids)
+            prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - 1)
+
             for pid in valid_pids:
                 prob += s_scen[pid, t, k] <= x_scen[pid, t, k]
                 prob += c_scen[pid, t, k] <= s_scen[pid, t, k]
@@ -165,6 +172,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
 
                 objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
                 objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
+
+            # Deduct hit cost penalty from objective
+            objective_terms.append(-1.0 * t_discount * hit_cost_scen[t, k])
 
     prob += pulp.lpSum(objective_terms)
 
