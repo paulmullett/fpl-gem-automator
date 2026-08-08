@@ -1,6 +1,7 @@
 """
 fpl_mpo_engine.py — Two-Stage Stochastic MILP Engine (PuLP / Native System CBC)
-Fully restores Endogenous Chip Deployment, Opportunity Cost Decay, and GW19 Half-Season Expiration Logic.
+Includes 2024/25 Banked Free Transfer Mechanics (Up to 5 FTs, Chip Retention, Mini-Wildcards)
+and Hard Hit Constraints.
 """
 
 import os
@@ -79,7 +80,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     y_tc = pulp.LpVariable.dicts("y_tc", range(horizons), cat="Binary")
     y_bb = pulp.LpVariable.dicts("y_bb", range(horizons), cat="Binary")
 
-    # Global Chip Rules: Max 1 of each chip per horizon, max 1 chip total per week
     prob += pulp.lpSum(y_wc[t] for t in range(horizons)) <= (1 if available_chips.get("wildcard", True) else 0)
     prob += pulp.lpSum(y_tc[t] for t in range(horizons)) <= (1 if available_chips.get("3xc", True) else 0)
     prob += pulp.lpSum(y_bb[t] for t in range(horizons)) <= (1 if available_chips.get("bboost", True) else 0)
@@ -87,7 +87,6 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     for t in range(horizons):
         prob += y_wc[t] + y_tc[t] + y_bb[t] <= 1
 
-    # Stage 1 Forced Active Chip Rules
     if active_chip == "WILDCARD" and available_chips.get("wildcard", True): prob += y_wc[0] == 1
     elif active_chip == "TRIPLE_CAPTAIN" and available_chips.get("3xc", True): prob += y_tc[0] == 1
     elif active_chip == "BENCH_BOOST" and available_chips.get("bboost", True): prob += y_bb[0] == 1
@@ -96,40 +95,44 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         prob += y_tc[0] == 0
         prob += y_bb[0] == 0
 
-    # Prevent automated Wildcard burning in early weeks (t=0, t=1) unless explicitly triggered
     for t in range(horizons):
         if t < 2 and active_chip != "WILDCARD":
             prob += y_wc[t] == 0
 
-    # Stage 1 Variables (GW1)
+    # --- STAGE 1 VARIABLES (GW1) ---
     x = pulp.LpVariable.dicts("x_gw1", valid_pids, cat="Binary")
     s = pulp.LpVariable.dicts("s_gw1", valid_pids, cat="Binary")
     c = pulp.LpVariable.dicts("c_gw1", valid_pids, cat="Binary")
     trans_in = pulp.LpVariable.dicts("tin_gw1", valid_pids, cat="Binary")
     trans_out = pulp.LpVariable.dicts("tout_gw1", valid_pids, cat="Binary")
 
-    # Stage 2 Variables (GW2-8 across scenarios)
+    # --- STAGE 1 BANKED FT VARIABLES ---
+    ft_avail_0 = pulp.LpVariable("ft_avail_0", lowBound=0, upBound=5, cat="Continuous")
+    ft_used_0 = pulp.LpVariable("ft_used_0", lowBound=0, upBound=5, cat="Continuous")
+    hit_cost_0 = pulp.LpVariable("hit_cost_0", lowBound=0.0, cat="Continuous")
+
+    # --- STAGE 2 VARIABLES (GW2-8 across scenarios) ---
     x_scen = pulp.LpVariable.dicts("x_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     tin_scen = pulp.LpVariable.dicts("tin_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     tout_scen = pulp.LpVariable.dicts("tout_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
     
     s_scen = pulp.LpVariable.dicts("s_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, upBound=1.0, cat="Continuous")
     c_scen = pulp.LpVariable.dicts("c_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, upBound=1.0, cat="Continuous")
+    
+    # --- STAGE 2 BANKED FT VARIABLES ---
+    ft_avail_scen = pulp.LpVariable.dicts("ft_avail_scen", ((t, k) for t in range(1, horizons) for k in range(num_scenarios)), lowBound=1, upBound=5, cat="Continuous")
+    ft_used_scen = pulp.LpVariable.dicts("ft_used_scen", ((t, k) for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0, upBound=5, cat="Continuous")
     hit_cost_scen = pulp.LpVariable.dicts("hit_scen", ((t, k) for t in range(1, horizons) for k in range(num_scenarios)), lowBound=0.0, cat="Continuous")
 
-    # --- DYNAMIC OPPORTUNITY COST DECAY MATHEMATICS ---
+    # Opportunity Cost Mathematics
     if target_gw <= 19:
         remaining_half = max(1.0, 19.0 - target_gw)
         decay = (remaining_half / 18.0) ** 0.5
-        wc_cost = 14.0 * decay
-        tc_cost = 9.0 * decay
-        bb_cost = 10.0 * decay
+        wc_cost = 14.0 * decay; tc_cost = 9.0 * decay; bb_cost = 10.0 * decay
     else:
         remaining_half = max(1.0, 38.0 - target_gw)
         decay = (remaining_half / 18.0) ** 0.5
-        wc_cost = 16.0 * decay
-        tc_cost = 14.0 * decay
-        bb_cost = 18.0 * decay
+        wc_cost = 16.0 * decay; tc_cost = 14.0 * decay; bb_cost = 18.0 * decay
 
     # Stage 1 Constraints
     prob += pulp.lpSum(x[pid] for pid in valid_pids) == 15
@@ -156,10 +159,14 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     for team_id in team_ids:
         prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
-    if is_fresh_squad:
+    if is_fresh_squad or str(free_transfers).lower() == "unlimited":
         prob += pulp.lpSum(players[pid]["cost"] * x[pid] for pid in valid_pids) <= total_liquid_budget
         prob += pulp.lpSum(trans_in[pid] for pid in valid_pids) == 0
         prob += pulp.lpSum(trans_out[pid] for pid in valid_pids) == 0
+        
+        prob += ft_avail_0 == 0
+        prob += ft_used_0 == 0
+        prob += hit_cost_0 == 0
     else:
         for pid in valid_pids:
             is_init = 1 if pid in initial_owned else 0
@@ -167,6 +174,13 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         cash_in = pulp.lpSum(players[pid].get("selling_price", players[pid]["cost"]) * trans_out[pid] for pid in valid_pids)
         cash_out = pulp.lpSum(players[pid]["cost"] * trans_in[pid] for pid in valid_pids)
         prob += bank + cash_in - cash_out >= 0.0
+        
+        prob += ft_avail_0 == min(5, max(1, int(free_transfers)))
+        trans_sum_0 = pulp.lpSum(trans_in[pid] for pid in valid_pids)
+        prob += ft_used_0 <= ft_avail_0
+        prob += ft_used_0 <= trans_sum_0
+        prob += ft_used_0 <= 5 * (1 - y_wc[0])
+        prob += hit_cost_0 >= 4.0 * (trans_sum_0 - ft_used_0) - (100.0 * y_wc[0])
 
     # Stage 2 Constraints
     for k in range(num_scenarios):
@@ -176,14 +190,25 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
             prob += pulp.lpSum(c_scen[pid, t, k] for pid in valid_pids) == 1
             prob += pulp.lpSum(players[pid]["cost"] * x_scen[pid, t, k] for pid in valid_pids) <= total_liquid_budget
 
-            # Wildcard suppresses transfer hit penalties to 0
+            # --- 2024/25 BANKED FREE TRANSFER MECHANICS ---
             trans_sum_scen = pulp.lpSum(tin_scen[pid, t, k] for pid in valid_pids)
-
+            
+            # Carryover calculation: Retained through Wildcards without accumulating +1
+            if t == 1:
+                prob += ft_avail_scen[t, k] <= (ft_avail_0 - ft_used_0) + 1 - y_wc[0]
+            else:
+                prob += ft_avail_scen[t, k] <= (ft_avail_scen[t-1, k] - ft_used_scen[t-1, k]) + 1 - y_wc[t-1]
+                
+            prob += ft_used_scen[t, k] <= ft_avail_scen[t, k]
+            prob += ft_used_scen[t, k] <= trans_sum_scen
+            prob += ft_used_scen[t, k] <= 5 * (1 - y_wc[t])
+            
             # HARD CAP: Maximum of 1 extra transfer for a -4 hit per week unless Wildcard is active
             prob += trans_sum_scen <= ft_avail_scen[t, k] + 1 + (15 * y_wc[t])
-
-            # CORRECT HIT PENALTY MATH: Subtracts actual free transfers used, not a static 1
+            
+            # Hit cost safely evaluates to 0 during Mini-Wildcards (where FTs >= transfers)
             prob += hit_cost_scen[t, k] >= 4.0 * (trans_sum_scen - ft_used_scen[t, k]) - (100.0 * y_wc[t])
+            # ----------------------------------------------
 
             for pid in valid_pids:
                 prob += s_scen[pid, t, k] <= x_scen[pid, t, k]
@@ -207,17 +232,19 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     objective_terms = []
     discount_factor = 0.85
 
-    # Deduct opportunity costs for chip deployments
     for t in range(horizons):
         objective_terms.append(-1.0 * wc_cost * y_wc[t])
         objective_terms.append(-1.0 * tc_cost * y_tc[t])
         objective_terms.append(-1.0 * bb_cost * y_bb[t])
 
     # Stage 1 Objective
+    objective_terms.append(-1.0 * hit_cost_0)
+    objective_terms.append(0.01 * (ft_avail_0 - ft_used_0))
+
     for pid in valid_pids:
         base_ev = ev_matrix[pid][0]
         objective_terms.append(base_ev * s[pid])
-        objective_terms.append(base_ev * c[pid]) # Captain 2x base
+        objective_terms.append(base_ev * c[pid])
 
     # Stage 2 Objective Across Scenarios
     for k in range(num_scenarios):
@@ -238,10 +265,10 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
 
             objective_terms.append(-1.0 * t_discount * hit_cost_scen[t, k])
+            objective_terms.append(0.01 * t_discount * (ft_avail_scen[t, k] - ft_used_scen[t, k]))
 
     prob += pulp.lpSum(objective_terms)
 
-    # Solve via native system CBC binary
     cbc_path = "/usr/bin/cbc"
     try:
         if os.path.exists(cbc_path):
