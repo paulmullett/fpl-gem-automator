@@ -89,29 +89,64 @@ def save_state(state):
     except Exception as e:
         print(f"ERROR: Failed to save state file: {e}")
 
-def get_available_chips(target_gw, headers):
-    available = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
+def get_user_fpl_context(target_gw, headers):
+    """
+    Fetches played chips and calculates exact banked Free Transfers (up to 5) 
+    directly from official FPL API season history.
+    """
+    available_chips = {"wildcard": True, "freehit": True, "bboost": True, "3xc": True}
+    banked_fts = 1
+
+    if target_gw == 1:
+        return available_chips, "Unlimited"
+
     try:
         resp = requests.get(f"https://fantasy.premierleague.com/api/entry/{FPL_TEAM_ID}/history/", headers=headers, timeout=10)
         if resp.status_code == 200:
             history_data = resp.json()
             played_chips = history_data.get("chips", [])
-            
+            season_history = history_data.get("current", [])
+
+            # 1. Audit Chip History
             half_played = []
+            chip_by_gw = {}
             for c in played_chips:
+                chip_by_gw[c["event"]] = c["name"]
                 if target_gw <= 19 and c["event"] <= 19:
                     half_played.append(c["name"])
                 elif target_gw > 19 and c["event"] > 19:
                     half_played.append(c["name"])
-            
-            available["wildcard"] = "wildcard" not in half_played
-            available["freehit"] = "freehit" not in half_played
-            available["bboost"] = "bboost" not in half_played
-            available["3xc"] = "3xc" not in half_played
+
+            available_chips["wildcard"] = "wildcard" not in half_played
+            available_chips["freehit"] = "freehit" not in half_played
+            available_chips["bboost"] = "bboost" not in half_played
+            available_chips["3xc"] = "3xc" not in half_played
+
+            # 2. Calculate Exact Banked Free Transfers (2024/25+ Rules: max 5 FTs)
+            current_ft = 1
+            for gw_data in season_history:
+                gw = gw_data["event"]
+                if gw >= target_gw:
+                    break
+
+                transfers_made = gw_data.get("event_transfers", 0)
+                active_chip = chip_by_gw.get(gw, "NONE")
+
+                if active_chip in ["wildcard", "freehit"]:
+                    # Under 2024/25 rules, transfers during Wildcard/Free Hit are free 
+                    # and retained FTs carry over without gaining +1
+                    continue
+                else:
+                    # Subtract transfers used, then add 1 for the new week, capped at 5
+                    unused_ft = max(0, current_ft - transfers_made)
+                    current_ft = min(5, unused_ft + 1)
+
+            banked_fts = current_ft
+
     except Exception as e:
-        print(f"WARNING: Could not fetch FPL chip history: {e}")
-        
-    return available
+        print(f"WARNING: Could not fetch FPL history context: {e}")
+
+    return available_chips, banked_fts
 
 def recalibrate_model(state, headers, active_gw):
     pending = state.get("pending_evaluation")
@@ -441,7 +476,7 @@ def get_fpl_data():
     dynamic_w_sub_1 = round(max(0.04, min(0.30, 1.0 - p_0)), 3)
     dynamic_w_sub_2 = round(max(0.01, min(0.15, 1.0 - p_0 - p_1)), 3)
 
-    available_chips = get_available_chips(target_gw, headers)
+    available_chips, free_transfers = get_user_fpl_context(target_gw, headers)
 
     optimal_squad, transfer_plan = solve_multi_period_model(
         players, ev_matrix, current_squad_ids, total_liquid_budget, 

@@ -13,6 +13,11 @@ def generate_stochastic_scenarios(ml_proj_path: str = "ml_projections.json",
                                    output_path: str = "stochastic_scenarios.json", 
                                    num_simulations: int = 1000, 
                                    num_clusters: int = 50) -> bool:
+    
+    # Lock the seed so Monte Carlo draws are 100% reproducible across runs
+    # Change BEFORE LAUNCH test sessions only update here
+    np.random.seed(42)
+    
     logger.info("Initializing Stochastic Oracle (SAA Scenario Generator)...")
     
     try:
