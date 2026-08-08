@@ -5,12 +5,11 @@ scikit-learn
 xgboost
 lightgbm
 soccerdata
-pulp
 requests
 google-genai
 ddgs
 discord.py
 python-dotenv
 highspy
-ortools>=9.10
+pulp>=2.7.0
 scikit-learn>=1.3.0

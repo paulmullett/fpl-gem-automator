@@ -1,12 +1,11 @@
 """
-fpl_mpo_engine.py — Two-Stage Stochastic MILP Engine (OR-Tools SCIP)
-Optimized for x86_64 Cloud Execution with Light Matrix Compression.
+fpl_mpo_engine.py — Two-Stage Stochastic MILP Engine (PuLP / Native System CBC)
 """
 
 import os
 import json
 import logging
-from ortools.linear_solver import pywraplp
+import pulp
 from fpl_funcs import estimate_xmins
 
 logger = logging.getLogger(__name__)
@@ -24,9 +23,9 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     if not valid_pids:
         return [], []
 
-    # --- LIGHT MATRIX COMPRESSION ---
-    # Retains the top 200 players to maintain maximal search quality
-    # while ensuring the SCIP solver clears the multiverse in < 120 seconds.
+    # --- MATRIX COMPRESSION (Player Pool Trimming) ---
+    # Trims unviable assets to keep the stochastic matrix under 150k variables,
+    # allowing native CBC to solve the two-stage model cleanly on local hardware.
     viable_pids = set(current_squad_ids)
     sorted_by_ev = sorted(valid_pids, key=lambda p: sum(ev_matrix[p]), reverse=True)
     
@@ -35,17 +34,17 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
         if pid in viable_pids: continue
         pos = players[pid]["pos_id"]
         
-        if pos == 1 and gks_added < 20:
+        if pos == 1 and gks_added < 12:
             viable_pids.add(pid); gks_added += 1
-        elif pos == 2 and defs_added < 65:
+        elif pos == 2 and defs_added < 35:
             viable_pids.add(pid); defs_added += 1
-        elif pos == 3 and mids_added < 75:
+        elif pos == 3 and mids_added < 35:
             viable_pids.add(pid); mids_added += 1
-        elif pos == 4 and fwds_added < 40:
+        elif pos == 4 and fwds_added < 20:
             viable_pids.add(pid); fwds_added += 1
 
     valid_pids = list(viable_pids)
-    # --------------------------------
+    # -------------------------------------------------
 
     # Load SAA Stochastic Scenarios
     stochastic_scenarios = None
@@ -60,111 +59,95 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
     scenario_weights = stochastic_scenarios.get("scenario_weights", [1.0]) if stochastic_scenarios else [1.0]
     num_scenarios = len(scenarios) if scenarios else 1
 
-    solver = pywraplp.Solver.CreateSolver('SCIP')
-    if not solver:
-        logger.error("Could not initialize SCIP solver.")
-        return [], []
-
     initial_owned = set(current_squad_ids) if (current_squad_ids and len(current_squad_ids) == 15) else set()
     is_fresh_squad = len(initial_owned) == 0
 
-    x = {}
-    s = {}
-    c = {}
-    trans_in = {}
-    trans_out = {}
+    prob = pulp.LpProblem("Stochastic_FPL_Solver", pulp.LpMaximize)
 
-    for pid in valid_pids:
-        x[pid, 0] = solver.BoolVar(f"x_{pid}_0")
-        s[pid, 0] = solver.BoolVar(f"s_{pid}_0")
-        c[pid, 0] = solver.BoolVar(f"c_{pid}_0")
-        trans_in[pid, 0] = solver.BoolVar(f"tin_{pid}_0")
-        trans_out[pid, 0] = solver.BoolVar(f"tout_{pid}_0")
+    # Stage 1: Here-and-Now
+    x = pulp.LpVariable.dicts("x_gw1", valid_pids, cat="Binary")
+    s = pulp.LpVariable.dicts("s_gw1", valid_pids, cat="Binary")
+    c = pulp.LpVariable.dicts("c_gw1", valid_pids, cat="Binary")
+    trans_in = pulp.LpVariable.dicts("tin_gw1", valid_pids, cat="Binary")
+    trans_out = pulp.LpVariable.dicts("tout_gw1", valid_pids, cat="Binary")
 
-    x_scen = {}
-    s_scen = {}
-    c_scen = {}
-    trans_in_scen = {}
-    trans_out_scen = {}
-
-    for k in range(num_scenarios):
-        for t in range(1, horizons):
-            for pid in valid_pids:
-                x_scen[pid, t, k] = solver.BoolVar(f"x_{pid}_{t}_k{k}")
-                s_scen[pid, t, k] = solver.BoolVar(f"s_{pid}_{t}_k{k}")
-                c_scen[pid, t, k] = solver.BoolVar(f"c_{pid}_{t}_k{k}")
-                trans_in_scen[pid, t, k] = solver.BoolVar(f"tin_{pid}_{t}_k{k}")
-                trans_out_scen[pid, t, k] = solver.BoolVar(f"tout_{pid}_{t}_k{k}")
+    # Stage 2: Wait-and-See
+    x_scen = pulp.LpVariable.dicts("x_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
+    s_scen = pulp.LpVariable.dicts("s_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
+    c_scen = pulp.LpVariable.dicts("c_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
+    tin_scen = pulp.LpVariable.dicts("tin_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
+    tout_scen = pulp.LpVariable.dicts("tout_scen", ((pid, t, k) for pid in valid_pids for t in range(1, horizons) for k in range(num_scenarios)), cat="Binary")
 
     # Stage 1 Constraints
-    solver.Add(sum(x[pid, 0] for pid in valid_pids) == 15)
-    solver.Add(sum(s[pid, 0] for pid in valid_pids) == 11)
-    solver.Add(sum(c[pid, 0] for pid in valid_pids) == 1)
+    prob += pulp.lpSum(x[pid] for pid in valid_pids) == 15
+    prob += pulp.lpSum(s[pid] for pid in valid_pids) == 11
+    prob += pulp.lpSum(c[pid] for pid in valid_pids) == 1
 
     for pid in valid_pids:
-        solver.Add(s[pid, 0] <= x[pid, 0])
-        solver.Add(c[pid, 0] <= s[pid, 0])
-        solver.Add(trans_in[pid, 0] + trans_out[pid, 0] <= 1)
+        prob += s[pid] <= x[pid]
+        prob += c[pid] <= s[pid]
+        prob += trans_in[pid] + trans_out[pid] <= 1
 
-    solver.Add(sum(x[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 1) == 2)
-    solver.Add(sum(x[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 2) == 5)
-    solver.Add(sum(x[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5)
-    solver.Add(sum(x[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3)
+    prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid]["pos_id"] == 1) == 2
+    prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid]["pos_id"] == 2) == 5
+    prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5
+    prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3
 
-    solver.Add(sum(s[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1)
-    solver.Add(sum(s[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3)
-    solver.Add(sum(s[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 5)
-    solver.Add(sum(s[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 2)
-    solver.Add(sum(s[pid, 0] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1)
+    prob += pulp.lpSum(s[pid] for pid in valid_pids if players[pid]["pos_id"] == 1) == 1
+    prob += pulp.lpSum(s[pid] for pid in valid_pids if players[pid]["pos_id"] == 2) >= 3
+    prob += pulp.lpSum(s[pid] for pid in valid_pids if players[pid]["pos_id"] == 2) <= 5
+    prob += pulp.lpSum(s[pid] for pid in valid_pids if players[pid]["pos_id"] == 3) >= 2
+    prob += pulp.lpSum(s[pid] for pid in valid_pids if players[pid]["pos_id"] == 4) >= 1
 
     team_ids = set(players[pid]["team_id"] for pid in valid_pids if players[pid].get("team_id"))
     for team_id in team_ids:
-        solver.Add(sum(x[pid, 0] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3)
+        prob += pulp.lpSum(x[pid] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
     if is_fresh_squad:
-        solver.Add(sum(players[pid]["cost"] * x[pid, 0] for pid in valid_pids) <= total_liquid_budget)
-        solver.Add(sum(trans_in[pid, 0] for pid in valid_pids) == 0)
-        solver.Add(sum(trans_out[pid, 0] for pid in valid_pids) == 0)
+        prob += pulp.lpSum(players[pid]["cost"] * x[pid] for pid in valid_pids) <= total_liquid_budget
+        prob += pulp.lpSum(trans_in[pid] for pid in valid_pids) == 0
+        prob += pulp.lpSum(trans_out[pid] for pid in valid_pids) == 0
     else:
         for pid in valid_pids:
             is_init = 1 if pid in initial_owned else 0
-            solver.Add(x[pid, 0] == is_init + trans_in[pid, 0] - trans_out[pid, 0])
-        cash_in = sum(players[pid].get("selling_price", players[pid]["cost"]) * trans_out[pid, 0] for pid in valid_pids)
-        cash_out = sum(players[pid]["cost"] * trans_in[pid, 0] for pid in valid_pids)
-        solver.Add(bank + cash_in - cash_out >= 0.0)
+            prob += x[pid] == is_init + trans_in[pid] - trans_out[pid]
+        cash_in = pulp.lpSum(players[pid].get("selling_price", players[pid]["cost"]) * trans_out[pid] for pid in valid_pids)
+        cash_out = pulp.lpSum(players[pid]["cost"] * trans_in[pid] for pid in valid_pids)
+        prob += bank + cash_in - cash_out >= 0.0
 
     # Stage 2 Constraints
     for k in range(num_scenarios):
         for t in range(1, horizons):
-            solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids) == 15)
-            solver.Add(sum(s_scen[pid, t, k] for pid in valid_pids) == 11)
-            solver.Add(sum(c_scen[pid, t, k] for pid in valid_pids) == 1)
+            prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids) == 15
+            prob += pulp.lpSum(s_scen[pid, t, k] for pid in valid_pids) == 11
+            prob += pulp.lpSum(c_scen[pid, t, k] for pid in valid_pids) == 1
 
             for pid in valid_pids:
-                solver.Add(s_scen[pid, t, k] <= x_scen[pid, t, k])
-                solver.Add(c_scen[pid, t, k] <= s_scen[pid, t, k])
-                solver.Add(trans_in_scen[pid, t, k] + trans_out_scen[pid, t, k] <= 1)
+                prob += s_scen[pid, t, k] <= x_scen[pid, t, k]
+                prob += c_scen[pid, t, k] <= s_scen[pid, t, k]
+                prob += tin_scen[pid, t, k] + tout_scen[pid, t, k] <= 1
 
                 if t == 1:
-                    solver.Add(x_scen[pid, 1, k] == x[pid, 0] + trans_in_scen[pid, 1, k] - trans_out_scen[pid, 1, k])
+                    prob += x_scen[pid, 1, k] == x[pid] + tin_scen[pid, 1, k] - tout_scen[pid, 1, k]
                 else:
-                    solver.Add(x_scen[pid, t, k] == x_scen[pid, t-1, k] + trans_in_scen[pid, t, k] - trans_out_scen[pid, t, k])
+                    prob += x_scen[pid, t, k] == x_scen[pid, t-1, k] + tin_scen[pid, t, k] - tout_scen[pid, t, k]
 
-            solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 1) == 2)
-            solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 2) == 5)
-            solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5)
-            solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3)
+            prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 1) == 2
+            prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 2) == 5
+            prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 3) == 5
+            prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids if players[pid]["pos_id"] == 4) == 3
 
             for team_id in team_ids:
-                solver.Add(sum(x_scen[pid, t, k] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3)
+                prob += pulp.lpSum(x_scen[pid, t, k] for pid in valid_pids if players[pid].get("team_id") == team_id) <= 3
 
-    objective = solver.Objective()
+    # Objective Function
+    objective_terms = []
     discount_factor = 0.85
 
     for pid in valid_pids:
         base_ev = ev_matrix[pid][0]
-        objective.SetCoefficient(s[pid, 0], base_ev)
-        objective.SetCoefficient(c[pid, 0], base_ev)
+        objective_terms.append(base_ev * s[pid])
+        objective_terms.append(base_ev * c[pid])
 
     for k in range(num_scenarios):
         scen_weight = scenario_weights[k] if k < len(scenario_weights) else (1.0 / num_scenarios)
@@ -180,29 +163,44 @@ def solve_multi_period_model(players: dict, ev_matrix: dict, current_squad_ids: 
                 else:
                     ev_val = float(ev_matrix[pid][t]) if t < len(ev_matrix[pid]) else 0.0
 
-                objective.SetCoefficient(s_scen[pid, t, k], ev_val * t_discount)
-                objective.SetCoefficient(c_scen[pid, t, k], ev_val * t_discount)
+                objective_terms.append((ev_val * t_discount) * s_scen[pid, t, k])
+                objective_terms.append((ev_val * t_discount) * c_scen[pid, t, k])
 
-    objective.SetMaximization()
+    prob += pulp.lpSum(objective_terms)
 
-    logger.info("Executing Two-Stage Stochastic MILP via OR-Tools SCIP...")
-    solver.set_time_limit(180000)
-    status = solver.Solve()
+    # Use native system CBC binary
+    cbc_path = "/usr/bin/cbc"
+    try:
+        if os.path.exists(cbc_path):
+            solver_cmd = pulp.PULP_CBC_CMD(path=cbc_path, msg=False, timeLimit=120)
+        else:
+            solver_cmd = pulp.PULP_CBC_CMD(msg=False, timeLimit=120)
+        prob.solve(solver_cmd)
+    except Exception as e:
+        logger.error(f"Solver error: {e}")
 
     optimal_squad = []
     transfer_plan = []
 
-    if status == pywraplp.Solver.OPTIMAL or status == pywraplp.Solver.FEASIBLE:
+    def has_feasible_squad():
+        try:
+            return sum(1 for pid in valid_pids if x[pid].varValue is not None and x[pid].varValue > 0.5) == 15
+        except Exception:
+            return False
+
+    if prob.status == pulp.LpStatusOptimal or has_feasible_squad():
+        logger.info("Stochastic Solution Found!")
+
         for pid in valid_pids:
-            if x[pid, 0].solution_value() > 0.5:
+            if x[pid].varValue and x[pid].varValue > 0.5:
                 p_copy = dict(players[pid])
-                p_copy["is_starter"] = bool(s[pid, 0].solution_value() > 0.5)
-                p_copy["is_captain"] = bool(c[pid, 0].solution_value() > 0.5)
+                p_copy["is_starter"] = bool(s[pid].varValue and s[pid].varValue > 0.5)
+                p_copy["is_captain"] = bool(c[pid].varValue and c[pid].varValue > 0.5)
                 optimal_squad.append(p_copy)
 
         for t in range(1, min(4, horizons)):
-            gw_trans_in = [players[pid]["name"] for pid in valid_pids if trans_in_scen[pid, t, 0].solution_value() > 0.5]
-            gw_trans_out = [players[pid]["name"] for pid in valid_pids if trans_out_scen[pid, t, 0].solution_value() > 0.5]
+            gw_trans_in = [players[pid]["name"] for pid in valid_pids if tin_scen[pid, t, 0].varValue and tin_scen[pid, t, 0].varValue > 0.5]
+            gw_trans_out = [players[pid]["name"] for pid in valid_pids if tout_scen[pid, t, 0].varValue and tout_scen[pid, t, 0].varValue > 0.5]
             if gw_trans_in or gw_trans_out:
                 transfer_plan.append(f"GW{target_gw + t}: In [{', '.join(gw_trans_in)}], Out [{', '.join(gw_trans_out)}]")
 
