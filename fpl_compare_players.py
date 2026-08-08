@@ -155,8 +155,8 @@ def fetch_data_and_compare():
     from ml_engine.data_ingestion import fetch_price_targets
     
     oracle_targets = fetch_price_targets()
-    price_deltas = get_live_price_deltas(players, oracle_targets)
-    
+
+    price_deltas = get_live_price_deltas(players)
     for pid, p in players.items():
         p["price_delta_prob"] = price_deltas.get(pid, 0.0)
 

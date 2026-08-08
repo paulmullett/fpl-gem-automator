@@ -117,6 +117,10 @@ def normalize_player(raw_p: Dict[str, Any], teams_map: Optional[Dict[int, str]] 
     p["id"] = int(raw_p.get("id"))
     p["name"] = raw_p.get("web_name") or raw_p.get("name") or "Unknown"
 
+    # NEW 2026/27 NATIVE FPL API FIELDS
+    p["price_change_percent"] = _safe_float(raw_p.get("price_change_percent") or 0.0)
+    p["fpl_native_defcon_90"] = _safe_float(raw_p.get("defensive_contribution_per_90") or 0.0)
+
     team_id = raw_p.get("team")
     p["team_id"] = int(team_id) if team_id is not None else None
     p["team"] = teams_map.get(team_id, "UNK") if teams_map else str(raw_p.get("team", "UNK"))
@@ -180,45 +184,23 @@ def get_gameweek_state(bootstrap_data: Dict[str, Any]):
     active_gw = current_gw_id or (target_gw if target_gw > 1 else 1)
     return active_gw, target_gw
 
-def get_live_price_deltas(players_dict: dict, oracle_targets: Optional[Dict[int, float]] = None) -> dict:
+def get_live_price_deltas(players_dict: dict) -> dict:
+    """
+    Extracts the official FPL native price change predictor percentage.
+    Scales the integer (-100 to 100) into a solver-compliant probability (-1.0 to 1.0).
+    """
     deltas = {}
-
-    # 1. PRIMARY ROUTE: Dedicated Price Oracle Targets (FPLStatistics)
-    if oracle_targets:
-        for pid, p in players_dict.items():
-            pid_int = int(pid)
-            target = oracle_targets.get(pid_int, 0.0)
-
-            # Direct linear target scaling: target is already a calibrated % (100.0 = 100%)
-            if target >= 100.0:
-                deltas[pid] = 1.0
-            elif target <= -100.0:
-                deltas[pid] = -1.0
-            else:
-                deltas[pid] = round(max(-1.0, min(1.0, target / 100.0)), 3)
-        return deltas
-
-    # 2. EMERGENCY FALLBACK: Legacy Net-Transfer Velocity Sigmoid
-    # Used ONLY if scrape_prices.py fails or fpl_price_targets.json is missing
     for pid, p in players_dict.items():
-        transfers_in = _safe_float(p.get("transfers_in_event"), 0.0)
-        transfers_out = _safe_float(p.get("transfers_out_event"), 0.0)
-        net_transfers = transfers_in - transfers_out
-
-        if net_transfers == 0:
-            deltas[pid] = 0.0
-            continue
-
-        own_percent = max(0.5, _safe_float(p.get("own"), 1.0))
-        velocity = net_transfers / (own_percent * 2500.0)
-
-        if velocity > 0:
-            prob = 1.0 / (1.0 + math.exp(-1.5 * (velocity - 1.0)))
+        # FPL's native progress tracker (100 = price rise, -100 = price fall)
+        target = p.get("price_change_percent", 0.0)
+        
+        if target >= 100.0:
+            deltas[pid] = 1.0
+        elif target <= -100.0:
+            deltas[pid] = -1.0
         else:
-            prob = -1.0 / (1.0 + math.exp(1.5 * (velocity + 1.0)))
-
-        deltas[pid] = round(max(-1.0, min(1.0, prob)), 3)
-
+            deltas[pid] = round(max(-1.0, min(1.0, target / 100.0)), 3)
+            
     return deltas
 
 def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] = None, 
@@ -295,13 +277,13 @@ def get_base_ev(p: Dict[str, Any], xmins_overrides: Optional[Dict[str, float]] =
         fbref_cbirt = _safe_float(p.get("fbref_cbirt_90"), 0.0)
         
         if pos_id == 2: # Defenders
-            # If no FBref data, center backs (~£5.0m+) hit ~11.5, attacking FBs (~£4.5m) hit ~8.0
+            # Use FPL's native defensive contribution metric if available, otherwise fallback to prior
+            fpl_defcon = _safe_float(p.get("fpl_native_defcon_90", 0.0))
             prior_cbit = fbref_cbit if fbref_cbit > 0 else (11.5 if cost >= 5.0 else 8.5)
-            fpl_cbit = _safe_float(p.get("fpl_cbit_90", 0.0))
-            
-            hybrid_cbit = (fpl_cbit * trust_factor) + (prior_cbit * (1.0 - trust_factor))
-            expected_actions = hybrid_cbit * mins_factor
-            
+
+            # If FPL provides native DefCon, use it entirely. Otherwise use the hybrid anchor.
+            expected_actions = (fpl_defcon * mins_factor) if fpl_defcon > 0 else ((fpl_cbit * trust_factor) + (prior_cbit * (1.0 - trust_factor))) * mins_factor
+        
             prob_threshold = poisson_prob_ge(9, expected_actions)
             extra_defensive_points = (prob_threshold * 2.0) * prob_60
             
